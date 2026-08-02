@@ -83,6 +83,9 @@ func main() {
 		renderer.SetDrawColor(255, 90, 200, 255)
 		surface.draw(renderer)
 
+		renderer.SetDrawColor(255, 255, 0, 255)
+		surface.drawSections(renderer)
+
 		renderer.SetDrawColor(0, 220, 255, 255)
 		for _, s := range ships {
 			cx, cz := camera.ProjectTopDown(s.Position)
@@ -192,6 +195,7 @@ func (t trackScenery) draw(renderer *sdl.Renderer) {
 type trackSurface struct {
 	vertices []psx.TrackVertex
 	faces    []psx.TrackFace
+	sections []psx.TrackSection
 	scale    float32
 	offsetX  float32
 	offsetZ  float32
@@ -221,6 +225,17 @@ func loadTrackSurface(trackDir string) trackSurface {
 		return trackSurface{}
 	}
 
+	// TRACK.TRS (section graph) is optional -- the surface mesh itself
+	// (TRV/TRF) is still useful without it, so a missing/bad .TRS logs and
+	// continues rather than dropping the whole surface.
+	var sections []psx.TrackSection
+	if trsData, err := os.ReadFile(base + "/TRACK.TRS"); err != nil {
+		log.Printf("track sections not loaded (%v)", err)
+	} else if sections, err = psx.DecodeTRS(trsData); err != nil {
+		log.Printf("TRACK.TRS parse failed (%v)", err)
+		sections = nil
+	}
+
 	minX, maxX := int32(0), int32(0)
 	minZ, maxZ := int32(0), int32(0)
 	for i, v := range vertices {
@@ -248,12 +263,13 @@ func loadTrackSurface(trackDir string) trackSurface {
 		scale = scaleZ
 	}
 
-	log.Printf("loaded track surface: %d vertices, %d faces (world span %.0f x %.0f, display scale %.4f)",
-		len(vertices), len(faces), spanX, spanZ, scale)
+	log.Printf("loaded track surface: %d vertices, %d faces, %d sections (world span %.0f x %.0f, display scale %.4f)",
+		len(vertices), len(faces), len(sections), spanX, spanZ, scale)
 
 	return trackSurface{
 		vertices: vertices,
 		faces:    faces,
+		sections: sections,
 		scale:    scale,
 		offsetX:  -float32(minX),
 		offsetZ:  -float32(minZ),
@@ -276,5 +292,25 @@ func (t trackSurface) draw(renderer *sdl.Renderer) {
 			bz := (float32(b.Z)+t.offsetZ)*t.scale + margin
 			renderer.RenderLine(ax, az, bx, bz)
 		}
+	}
+}
+
+// drawSections renders the section graph's spine -- a line from each
+// section to its Next neighbor (Previous is redundant, every link is
+// walked twice over the whole graph; NextJunction fork points aren't drawn
+// separately here) -- using the same scale/offset as draw() so it lines up
+// with the surface mesh it indexes into.
+func (t trackSurface) drawSections(renderer *sdl.Renderer) {
+	const margin = 40.0
+	for _, s := range t.sections {
+		if s.Next < 0 || int(s.Next) >= len(t.sections) {
+			continue
+		}
+		next := t.sections[s.Next]
+		ax := (float32(s.X)+t.offsetX)*t.scale + margin
+		az := (float32(s.Z)+t.offsetZ)*t.scale + margin
+		bx := (float32(next.X)+t.offsetX)*t.scale + margin
+		bz := (float32(next.Z)+t.offsetZ)*t.scale + margin
+		renderer.RenderLine(ax, az, bx, bz)
 	}
 }

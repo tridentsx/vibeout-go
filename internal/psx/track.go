@@ -86,3 +86,55 @@ func DecodeTRF(data []byte) ([]TrackFace, error) {
 	}
 	return faces, nil
 }
+
+// TrackSection flag bits, ported from wipeout.js's Wipeout.TrackSection.FLAGS.
+const (
+	TrackSectionJump          = 1
+	TrackSectionJunctionEnd   = 8
+	TrackSectionJunctionStart = 16
+	TrackSectionJunction      = 32
+)
+
+// TrackSection is one .TRS record: a node in the track's section graph
+// (Previous/Next link neighboring sections; NextJunction branches off for
+// track forks) plus its center position and which FirstFace/NumFaces range
+// of the .TRF face list belongs to it. This is the same "track section"
+// concept independently confirmed throughout bn-psx's ship-physics RE work
+// (e.g. maybe_AssignTrackSectionIndices writing [ship+0x98], maybe_RunShipAutopilot's
+// waypoint-following) -- real disc data validating the binary analysis, not
+// just a new asset format.
+type TrackSection struct {
+	NextJunction, Previous, Next int32
+	X, Y, Z                      int32
+	FirstFace                    uint32
+	NumFaces                     uint16
+	Flags                        uint16
+}
+
+const trackSectionSize = 156
+
+// DecodeTRS parses every TrackSection in a .TRS file's bytes.
+func DecodeTRS(data []byte) ([]TrackSection, error) {
+	if len(data)%trackSectionSize != 0 {
+		return nil, fmt.Errorf("psx: TRS file length %d not a multiple of %d", len(data), trackSectionSize)
+	}
+	sections := make([]TrackSection, len(data)/trackSectionSize)
+	for i := range sections {
+		off := i * trackSectionSize
+		sections[i] = TrackSection{
+			NextJunction: int32(binary.BigEndian.Uint32(data[off : off+4])),
+			Previous:     int32(binary.BigEndian.Uint32(data[off+4 : off+8])),
+			Next:         int32(binary.BigEndian.Uint32(data[off+8 : off+12])),
+			X:            int32(binary.BigEndian.Uint32(data[off+12 : off+16])),
+			Y:            int32(binary.BigEndian.Uint32(data[off+16 : off+20])),
+			Z:            int32(binary.BigEndian.Uint32(data[off+20 : off+24])),
+			// off+24:off+140 (116 bytes) skipped, matching Wipeout.TrackSection.
+			FirstFace: binary.BigEndian.Uint32(data[off+140 : off+144]),
+			NumFaces:  binary.BigEndian.Uint16(data[off+144 : off+146]),
+			// off+146:off+150 (4 bytes) skipped.
+			Flags: binary.BigEndian.Uint16(data[off+150 : off+152]),
+			// off+152:off+156 (4 bytes) skipped.
+		}
+	}
+	return sections, nil
+}
