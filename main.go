@@ -26,6 +26,11 @@ const (
 	shipHalfPx = 4.0
 )
 
+// cameraTargetShip picks which ship the demo camera follows (index into the
+// ships slice below) -- the port's future "local player" concept, once
+// there is one.
+const cameraTargetShip = 0
+
 func main() {
 	defer binsdl.Load().Unload()
 	defer sdl.Quit()
@@ -60,6 +65,13 @@ func main() {
 		for _, s := range ships {
 			game.UpdatePhysics(s)
 		}
+		// See internal/game/camera.go: NewChaseCamera is an explicitly
+		// PLACEHOLDER, not-reverse-engineered camera (open item, TODO.md
+		// "Camera system"). Only applied to the ship demo below -- the
+		// track's own rendering still uses its independent bounding-box fit
+		// (loadTrackScenery/draw), since the ship-demo and real track data
+		// are on unrelated coordinate scales that haven't been unified yet.
+		camera := game.NewChaseCamera(ships[cameraTargetShip])
 
 		renderer.SetDrawColor(10, 10, 20, 255)
 		renderer.Clear()
@@ -69,8 +81,9 @@ func main() {
 
 		renderer.SetDrawColor(0, 220, 255, 255)
 		for _, s := range ships {
-			px := originX + s.Position.X*worldScale
-			py := originY + s.Position.Z*worldScale
+			cx, cz := camera.ProjectTopDown(s.Position)
+			px := originX + cx*worldScale
+			py := originY - cz*worldScale // camera forward (+Z) is "up" on screen
 			renderer.RenderFillRect(&sdl.FRect{
 				X: px - shipHalfPx,
 				Y: py - shipHalfPx,

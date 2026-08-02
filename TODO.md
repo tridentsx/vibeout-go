@@ -158,6 +158,30 @@ authority rule above:
       how to represent in Go (probably a small state machine, not a literal
       function-pointer port).
 
+### 🔴 OPEN ITEM: camera system is a placeholder, not reverse-engineered
+
+`internal/game/camera.go`'s `NewChaseCamera` is a **standard, hand-picked
+third-person chase camera** (behind + above the ship, following its
+heading) — explicitly **not** derived from the real binary, unlike
+everything else in `internal/game/`. This breaks from the authority rule
+above and needs closing out.
+
+What's actually confirmed from bn-psx so far: `maybe_TransformAndSubmitPolygons`
+(SLES_003.27 `0x80012ed4`) loads a precomputed camera-relative transform
+matrix from `[drawObject+0x30]` straight into the GTE before `gte_rtps()`
+— the standard PS1 pattern of combining camera and object world transforms
+once per object per frame, not per-vertex. The draw-list table this reads
+from (`0x800f6f24`) was located, but tracing where each entry's `+0x30`
+matrix actually gets *written* (and from there, the real camera
+position/orientation formula relative to the ship) was not done — a
+genuinely open RE task, not just unstarted busywork.
+
+**To close this item**: reverse-engineer that write site in bn-psx, update
+`bn-psx/docs/wipeout2097_ship_physics_hunt.md` with the findings, then
+replace `NewChaseCamera`'s body (not just its constants) with the real
+formula, updating the "PLACEHOLDER CAMERA" comment in `camera.go`
+accordingly.
+
 ## Open decisions (not yet made, don't assume)
 
 - Perspective-correct vs. affine texture mapping (see Rendering approach).
