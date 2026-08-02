@@ -47,6 +47,7 @@ func main() {
 	defer window.Destroy()
 
 	track := loadTrackScenery("TRACK01")
+	surface := loadTrackSurface("TRACK01")
 
 	ships := []*game.Ship{
 		{Position: game.Vector3{X: 0, Y: 0, Z: 0}, Velocity: game.Vector3{X: 320, Z: 40}},
@@ -78,6 +79,9 @@ func main() {
 
 		renderer.SetDrawColor(90, 90, 110, 255)
 		track.draw(renderer)
+
+		renderer.SetDrawColor(255, 90, 200, 255)
+		surface.draw(renderer)
 
 		renderer.SetDrawColor(0, 220, 255, 255)
 		for _, s := range ships {
@@ -165,8 +169,8 @@ func loadTrackScenery(trackDir string) trackScenery {
 func (t trackScenery) draw(renderer *sdl.Renderer) {
 	const margin = 40.0
 	for _, obj := range t.objects {
-		ox := (float32(obj.Header.Position.X) + t.offsetX) * t.scale + margin
-		oz := (float32(obj.Header.Position.Z) + t.offsetZ) * t.scale + margin
+		ox := (float32(obj.Header.Position.X)+t.offsetX)*t.scale + margin
+		oz := (float32(obj.Header.Position.Z)+t.offsetZ)*t.scale + margin
 		for _, poly := range obj.Polygons {
 			for i := range poly.Indices {
 				a := obj.Vertices[poly.Indices[i]]
@@ -176,6 +180,101 @@ func (t trackScenery) draw(renderer *sdl.Renderer) {
 					ox+float32(b.X)*t.scale, oz+float32(b.Z)*t.scale,
 				)
 			}
+		}
+	}
+}
+
+// trackSurface is the track's actual driving mesh (TRACK.TRV vertices +
+// TRACK.TRF faces) -- distinct from trackScenery's decorative objects.
+// Vertices are already in absolute track space (no per-object origin to
+// apply), so this uses its own independent bounding-box fit, same as
+// trackScenery does for its own coordinate range.
+type trackSurface struct {
+	vertices []psx.TrackVertex
+	faces    []psx.TrackFace
+	scale    float32
+	offsetX  float32
+	offsetZ  float32
+}
+
+func loadTrackSurface(trackDir string) trackSurface {
+	base := wipeoutDiscPath + "/" + trackDir
+	trvData, err := os.ReadFile(base + "/TRACK.TRV")
+	if err != nil {
+		log.Printf("track surface not loaded (%v) -- continuing without it", err)
+		return trackSurface{}
+	}
+	trfData, err := os.ReadFile(base + "/TRACK.TRF")
+	if err != nil {
+		log.Printf("track surface not loaded (%v) -- continuing without it", err)
+		return trackSurface{}
+	}
+
+	vertices, err := psx.DecodeTRV(trvData)
+	if err != nil {
+		log.Printf("TRACK.TRV parse failed (%v) -- continuing without it", err)
+		return trackSurface{}
+	}
+	faces, err := psx.DecodeTRF(trfData)
+	if err != nil {
+		log.Printf("TRACK.TRF parse failed (%v) -- continuing without it", err)
+		return trackSurface{}
+	}
+
+	minX, maxX := int32(0), int32(0)
+	minZ, maxZ := int32(0), int32(0)
+	for i, v := range vertices {
+		if i == 0 || v.X < minX {
+			minX = v.X
+		}
+		if i == 0 || v.X > maxX {
+			maxX = v.X
+		}
+		if i == 0 || v.Z < minZ {
+			minZ = v.Z
+		}
+		if i == 0 || v.Z > maxZ {
+			maxZ = v.Z
+		}
+	}
+
+	const margin = 40.0
+	spanX := float32(maxX-minX) + 1
+	spanZ := float32(maxZ-minZ) + 1
+	scaleX := (1280 - 2*margin) / spanX
+	scaleZ := (720 - 2*margin) / spanZ
+	scale := scaleX
+	if scaleZ < scale {
+		scale = scaleZ
+	}
+
+	log.Printf("loaded track surface: %d vertices, %d faces (world span %.0f x %.0f, display scale %.4f)",
+		len(vertices), len(faces), spanX, spanZ, scale)
+
+	return trackSurface{
+		vertices: vertices,
+		faces:    faces,
+		scale:    scale,
+		offsetX:  -float32(minX),
+		offsetZ:  -float32(minZ),
+	}
+}
+
+func (t trackSurface) draw(renderer *sdl.Renderer) {
+	const margin = 40.0
+	for _, f := range t.faces {
+		n := 4
+		if f.Indices[2] == f.Indices[3] {
+			n = 3 // triangle: last index repeats, per wipeout.js's TrackFace layout
+		}
+		for i := 0; i < n; i++ {
+			a := t.vertices[f.Indices[i]]
+			b := t.vertices[f.Indices[(i+1)%n]]
+			ax := (float32(a.X)+t.offsetX)*t.scale + margin
+			az := (float32(a.Z)+t.offsetZ)*t.scale + margin
+			bx := (float32(b.X)+t.offsetX)*t.scale + margin
+			bz := (float32(b.Z)+t.offsetZ)*t.scale + margin
+			renderer.RenderLine(ax, az, bx, bz)
 		}
 	}
 }
