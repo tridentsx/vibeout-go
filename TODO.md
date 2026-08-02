@@ -112,13 +112,51 @@ validated against all 174 `.TIM`/`.CMP`/`.PRM` files on the real disc:
 
 ## Reverse-engineering status (ship physics/game loop)
 
-Full details, reproducible live-debugging technique, and exact next steps
-live in `bn-psx/docs/wipeout2097_ship_physics_hunt.md` — not duplicated
-here since that doc is the actively-maintained source of truth for this
-effort. Current state as of this writing: the real per-frame race loop
-(`maybe_RaceMain`, confirmed live via GDB/PCSX-Redux) is located, but the
-actual per-ship physics integration inside its ~110-function call graph is
-not yet isolated.
+Full details and exact next steps live in
+`bn-psx/docs/wipeout2097_ship_physics_hunt.md` — not duplicated here since
+that doc is the actively-maintained source of truth for this effort.
+Current state: the real per-ship physics integrator is identified with
+strong confidence — `maybe_IntegrateShipPhysics` (AI ships, fed synthetic
+pad-shaped input by `maybe_RunShipAutopilot`) and
+`maybe_IntegrateShipPhysicsFromPadInput` (real pad input, structurally
+parallel, no AI-exclusion check) both confirmed writing position, velocity,
+and all three orientation axes (pitch/yaw/roll) every frame. The exact
+runtime dispatch connecting real/synthetic input to these functions was
+*not* found despite an exhaustive, verified search of every control-transfer
+instruction in the executable (confirmed not an overlay either — checked
+against the actual disc contents) — this remains the one open question in
+an otherwise-resolved physics picture.
+
+## Game logic port (`internal/game/`)
+
+Started converting confirmed reverse-engineered logic into Go, per the
+authority rule above:
+
+- [x] `angle.go` — the original's 12-bit (4096-unit) circle convention as an
+      `Angle` type, `Sin`/`Cos` via Go's `math` package rather than porting
+      the original's lookup table (see file comment for why).
+- [x] `ship.go` — `Ship` struct covering the confirmed subset of the
+      original 240-byte ship struct (position, velocity, pitch/yaw/roll,
+      flags, section ID, track progress, rank counters). Deliberately
+      partial — only fields with independently-confirmed semantics are
+      included; each field cites its original struct offset for
+      cross-referencing bn-psx's decompilation.
+- [x] `physics.go` — `UpdatePhysics`, porting the confirmed velocity-decay +
+      position-integration core (`v -= v>>4`, `position += v>>5` in the
+      original, ported as float32 multiplies). Deliberately does *not* yet
+      cover steering input, banking/lean, or collision recovery — those
+      parts of the original functions aren't decoded closely enough to port
+      with confidence yet.
+- [ ] Steering input application (blocked on the dispatch-mechanism gap
+      above — need to pin down how pad input actually reaches the
+      integrator before porting how it's used).
+- [ ] AI waypoint-following (`maybe_RunShipAutopilot`'s track-curvature-based
+      synthetic input generation) — identified but not closely decoded.
+- [ ] Collision/effect-callback-chain system (the `[ship+0xec]`/`[+0xe0]`
+      convention) — identified as a real mechanism (timed effects like
+      spin-out recovery) but not ported; needs its own design decision for
+      how to represent in Go (probably a small state machine, not a literal
+      function-pointer port).
 
 ## Open decisions (not yet made, don't assume)
 
