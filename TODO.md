@@ -137,19 +137,58 @@ authority rule above:
       the original's lookup table (see file comment for why).
 - [x] `ship.go` — `Ship` struct covering the confirmed subset of the
       original 240-byte ship struct (position, velocity, pitch/yaw/roll,
-      flags, section ID, track progress, rank counters). Deliberately
-      partial — only fields with independently-confirmed semantics are
-      included; each field cites its original struct offset for
-      cross-referencing bn-psx's decompilation.
+      flags, section ID, speed/max speed, track progress, rank counters).
+      Deliberately partial — only fields with independently-confirmed
+      semantics are included; each field cites its original struct offset
+      for cross-referencing bn-psx's decompilation. `SectionID`'s offset
+      was corrected in session 8 (was wrongly `[ship+0x98]`, actually
+      `[ship+0xc8]/[+0xca]` — see `throttle.go`'s entry below for what
+      `+0x98` really is).
 - [x] `physics.go` — `UpdatePhysics`, porting the confirmed velocity-decay +
       position-integration core (`v -= v>>4`, `position += v>>5` in the
       original, ported as float32 multiplies). Deliberately does *not* yet
       cover steering input, banking/lean, or collision recovery — those
       parts of the original functions aren't decoded closely enough to port
       with confidence yet.
-- [ ] Steering input application (blocked on the dispatch-mechanism gap
-      above — need to pin down how pad input actually reaches the
-      integrator before porting how it's used).
+- [x] `throttle.go` — `UpdateThrottle`, porting the confirmed throttle/speed
+      ramp from `maybe_IntegrateShipPhysicsFromPadInput`'s opening block
+      (session 8): `Speed` ramps toward a throttle-derived target at a
+      fixed rate, clamped to `MaxSpeed`. Verified via raw disassembly, not
+      just decompiled pseudo-C, after finding the decompiler had flattened
+      two different pad-state bit tests into one misleading branch.
+- [ ] **Thrust-to-velocity model** — session 8 found the real formula in
+      `maybe_IntegrateShipPhysics` (`0x80030784`): `thrust = Speed *
+      forwardVector * boostMultiplier`, fed through a spring-like
+      acceleration term into velocity. NOT yet ported — `[ship+0x90]`/
+      `[+0x92]` (the spring denominator) and the boost multiplier's real
+      trigger aren't confirmed, and porting them as guesses would violate
+      the project's stated care about not porting unconfirmed constants.
+      See `bn-psx/docs/wipeout2097_ship_physics_hunt.md` session 8.
+- [x] `steering.go` — `UpdateSteeringDigital` + `IntegrateYawFromSteering`,
+      porting the confirmed digital-input steering-rate ramp and its
+      yaw-integration tail from `maybe_RunShipAutopilot`/
+      `maybe_IntegrateShipPhysics` (session 8). This also reframes the
+      earlier "steering input" blocker: `maybe_RunShipAutopilot` turns out
+      to read `padInputState` directly and isn't AI-exclusive — see the
+      hunt doc's session 8 addendum for why `maybe_IntegrateShipPhysicsFromPadInput`
+      (zero static callers, session 7) is now suspected dead code rather
+      than the real human-input path.
+- [ ] Analog-stick steering path and bank/lean/pitch/roll — found (session
+      8) but deliberately not ported: the analog clamp's exact bit
+      manipulation isn't disassembly-verified, and bank/lean interacts
+      with un-traced collision-avoidance code. See the hunt doc.
+- [x] ~~Confirm whether the local player goes through this same steering
+      path~~ — investigated and dead-ended cleanly: `maybe_RunShipAutopilot`
+      itself has zero static callers (Binary Ninja's own xref database,
+      a raw pointer-table byte scan, and a constant-propagation scan of
+      `maybe_RaceMain` all found nothing), so the per-ship dispatch
+      mechanism is unrecoverable from static analysis for *any* ship, not
+      just the two leaf integrator functions from session 7. Since
+      `UpdateThrottle`/`UpdateSteeringDigital` are driven purely by
+      `padInputState` and per-ship stats (nothing AI-specific), reusing
+      them for the local player is a reasonable, explicitly-flagged
+      engineering assumption — not blocked guesswork, just not a
+      confirmed fact. See the hunt doc's session 8 addendum.
 - [ ] AI waypoint-following (`maybe_RunShipAutopilot`'s track-curvature-based
       synthetic input generation) — identified but not closely decoded.
 - [ ] Collision/effect-callback-chain system (the `[ship+0xec]`/`[+0xe0]`

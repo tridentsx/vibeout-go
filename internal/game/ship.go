@@ -9,14 +9,20 @@ type Vector3 struct {
 }
 
 // ControlSource selects which system drives a ship's physics each frame.
-// In the original binary this maps to two structurally parallel but
-// separate functions with no static call site found linking either to the
-// per-frame loop (bn-psx/docs/wipeout2097_ship_physics_hunt.md, session 7):
-// maybe_RunShipAutopilot (synthesizes pad-shaped input from track curvature,
-// explicitly skips the ship whose [+0xac]&0x8000 flag is set) and
+// Session 7 found two structurally parallel functions and couldn't resolve
+// which one dispatches to a real player at runtime: maybe_RunShipAutopilot
+// (synthesizes pad-shaped input from track curvature, explicitly skips the
+// ship whose [+0xac]&0x8000 flag is set) and
 // maybe_IntegrateShipPhysicsFromPadInput (real pad input, no such skip).
-// The exact runtime dispatch was never resolved from the static binary --
-// this enum is this project's own explicit stand-in for that missing piece.
+// Session 9 resolved this with a live breakpoint on
+// maybe_IntegrateShipPhysicsFromPadInput's entry during active real-controller
+// steering: it never fired. It's dead code, not an untraceable dispatch --
+// maybe_RunShipAutopilot is confirmed to be the one real per-ship control
+// path, for both AI and human input (whichever padInputState its caller
+// passes in). This enum remains this project's own explicit stand-in for
+// the (now-irrelevant) dispatch question, kept for the AI/network/local
+// distinction itself, which is still useful even though the "which
+// function" mystery is closed.
 type ControlSource int
 
 const (
@@ -39,11 +45,22 @@ type Ship struct {
 	Position Vector3
 	Velocity Vector3
 
-	// Pitch, Yaw, Roll ([ship+0x70]/[+0x72]/[+0x74]) -- the session 7
+	// Yaw, Pitch, Roll ([ship+0x70]/[+0x72]/[+0x74]) -- the session 7
 	// breakthrough: confirmed as the actual per-ship orientation integration
 	// site, ending a multi-session search. Both physics-integrator functions
 	// write all three every frame.
-	Pitch, Yaw, Roll Angle
+	//
+	// Correction (session 10): session 5's original offset assignment
+	// ("+0x70/+0x72/+0x74 = Pitch/Yaw/Roll") had pitch and yaw swapped --
+	// it was an explicitly uncertain guess at the time ("open for
+	// pitch/yaw"). Confirmed this session by tracing exactly which offset
+	// each ported formula writes to: both IntegrateYawFromSteering's
+	// steeringRate-derived term and the air-brake-differential term
+	// (physics.go) write to [ship+0x70] -- that's Yaw. The bank-rate decay
+	// term writes to [ship+0x72] -- Pitch. The roll-rate accumulator
+	// writes to [ship+0x74] -- Roll, as already established. Field
+	// declaration order below now matches the real offset order.
+	Yaw, Pitch, Roll Angle
 
 	// Flags ([ship+0xc]), a bitfield tested throughout the collision,
 	// retire, and AI-reaction code. Only the bits with a well-established
@@ -51,10 +68,116 @@ type Ship struct {
 	// the rest are preserved verbatim but not yet individually decoded.
 	Flags uint32
 
-	// SectionID ([ship+0x98]) -- current track section index, used for
-	// spatial queries (maybe_BuildSectionSpatialIndex and others) and AI
-	// waypoint navigation (maybe_RunShipAutopilot).
+	// SectionID ([ship+0xc8]/[+0xca]) -- current track section index, used
+	// for spatial queries (maybe_BuildSectionSpatialIndex and others) and AI
+	// waypoint navigation (maybe_RunShipAutopilot). Correction (session 8,
+	// bn-psx/docs/wipeout2097_ship_physics_hunt.md): earlier sessions
+	// mislabeled this as [ship+0x98], conflating it with the *section*
+	// struct's own self-index field at the section's own +0x98 (reached via
+	// [ship+4], a pointer to the ship's current TrackSection node) --
+	// [ship+0x98] directly is a completely different field, see Speed below.
 	SectionID int16
+
+	// Speed and MaxSpeed ([ship+0x98]/[+0x9a]) -- current speed, ramped
+	// toward a throttle-derived target at a fixed rate (see UpdateThrottle),
+	// and its per-ship-class cap (loaded from a difficulty-branched stat
+	// table at race setup). Confirmed session 8. Wired into Velocity/Position
+	// via IntegrateShipPhysics (sessions 8-9, see physics.go).
+	Speed, MaxSpeed float32
+
+	// Forward ([ship+0x10]/[+0x14]/[+0x18]) -- a fixed-point forward-facing
+	// unit vector, distinct from the render rotation matrix. Confirmed to
+	// feed the thrust formula in IntegrateShipPhysics (session 8), but how
+	// the original keeps it in sync with Yaw/steering was never found (the
+	// write site doesn't exist anywhere IntegrateShipPhysics's callers were
+	// traced) -- IntegrateShipPhysics derives it from Yaw via cos/sin as an
+	// explicit, flagged engineering assumption, not a ported fact.
+	Forward Vector3
+
+	// AirBrakeLeft, AirBrakeRight ([ship+0x90]/[+0x92]) -- per-side air-brake
+	// ramp values, confirmed session 9 (sub_800662fc): +38/frame while held,
+	// -38/frame while released, floor at 0 (no ceiling found in the writer).
+	// Their sum feeds IntegrateShipPhysics's spring-accel denominator
+	// (braking trades responsiveness for control); their difference feeds a
+	// speed-scaled yaw term (differential-brake steering assist).
+	AirBrakeLeft, AirBrakeRight float32
+
+	// BoostState ([ship+0x9c]) -- selects the thrust boost multiplier in
+	// IntegrateShipPhysics: 0 -> 1x, 1-2 -> 3x, >=3 -> 6x (confirmed via
+	// disassembly, session 8). What sets this value (boost pad? weapon
+	// pickup?) was never reconciled against the pickup system -- only the
+	// multiplier mapping itself is confirmed.
+	BoostState int32
+
+	// InertiaFactor ([ship+0x7e]) and DragCoefficient ([ship+0xa4]) --
+	// per-ship-class stats loaded from the same difficulty-branched spec
+	// tables as MaxSpeed/TurnAccel/TurnRate (session 4/8), used respectively
+	// as the divisor for thrust's contribution to acceleration and as a
+	// scale factor in an air-brake-modulated velocity decay term in
+	// IntegrateShipPhysics (session 9). Their mathematical roles are
+	// confirmed from disassembly; "inertia"/"drag" are this project's own
+	// plausible-but-unconfirmed physical labels for what the original's own
+	// docs never individually named (session 8: "not yet individually
+	// identified").
+	InertiaFactor, DragCoefficient float32
+
+	// SpeedMagnitude ([ship+0x94]) -- half of the current velocity vector's
+	// magnitude, recomputed each IntegrateShipPhysics call (session 8-9).
+	// Feeds the air-brake differential yaw term. The original gates this
+	// recompute on an unconfirmed flag ([ship+0xc2]); this port always
+	// recomputes it, the common case.
+	SpeedMagnitude float32
+
+	// SteeringRate ([ship+0x76]) -- a ramped turn-rate accumulator, and
+	// TurnAccel/TurnRate ([ship+0xa0]/[+0xa2]), its per-ship-class ramp
+	// rate and clamp (loaded from the same difficulty-branched spec tables
+	// as MaxSpeed). Confirmed session 8. Sign convention (this port's own
+	// choice, not literally the original's -- see steering.go's file-level
+	// comment): positive = left, negative = right. Ported via
+	// UpdateSteeringDigital (plain button input) and UpdateSteeringTwist
+	// (NegCon twist input, session 9), both feeding IntegrateYawFromSteering.
+	SteeringRate, TurnAccel, TurnRate float32
+
+	// PitchRate ([ship+0x78], renamed from an earlier working name of
+	// "BankRate" -- session 10 confirmed via real-world game knowledge
+	// that WipEout 2097 has no dedicated bank button at all; this is a
+	// separate nose-pitch control) -- a ramped accumulator feeding Pitch
+	// each frame (confirmed session 10, maybe_IntegrateShipPhysics's tail:
+	// `pitch += round(signed16(pitchRate)/16)` after a compound decay,
+	// `pitchRate = (pitchRate-60) - (pitchRate-60)/4`). Ramped +/-0x24 per
+	// frame by maybe_RunShipAutopilot based on padInputState[2] bits
+	// 0x40/0x10, matching D-pad Down/Up (Up dips the nose down, Down
+	// pulls it up, per the user's real-world knowledge session 10) --
+	// ported via UpdatePitchInput. The raw-bit-to-button mapping itself
+	// (which of 0x40/0x10 is which D-pad direction) rests on one earlier
+	// hand-traced LLIL reading plus the visual-direction description, not
+	// an independent live verification the way the air-brake and steering
+	// bits got -- treat as plausible, not confirmed to the same standard
+	// as the rest of this file.
+	//
+	// RollRate ([ship+0x7a]) -- feeds Roll each frame (`roll += rollRate`,
+	// then a self-decay on the sum: `roll -= roll>>3`). Confirmed session
+	// 10: RollRate itself is driven directly by SteeringRate
+	// (`rollRate += steeringRate/32`, then `rollRate -= rollRate/2`) --
+	// this is WipEout 2097's real banking mechanic: turning the ship rolls
+	// it into the turn, matching the "steering + airbrakes" combined
+	// effect described in session 10 (the airbrake half is the
+	// air-brake-differential yaw term in physics.go, not this field).
+	// Resolves what was initially misread mid-session as "no writer found"
+	// (a mistraced register turned out to be SteeringRate, not an
+	// independent field). Not an externally-driven input like PitchRate;
+	// IntegratePitchAndRoll both sets and integrates it.
+	PitchRate, RollRate float32
+
+	// TwistMargin, TwistDivisor -- NegCon twist-steering calibration
+	// constants consumed by UpdateSteeringTwist (session 9). In the
+	// original these are free-standing globals (data_80094d3c-derived
+	// center fixed at 128, a margin table indexed by a per-ship-class
+	// "curve" selection, and a divisor byte), not per-ship-struct fields --
+	// modeled as Ship fields here for API consistency with
+	// InertiaFactor/DragCoefficient. Confirmed live for the default case:
+	// margin=6, divisor=255.
+	TwistMargin, TwistDivisor float32
 
 	// TrackProgress ([ship+0xb0]/[+0xb4]) -- cumulative distance-along-track
 	// accumulator, written by maybe_UpdateShipRaceRankAndAI from a

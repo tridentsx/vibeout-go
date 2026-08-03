@@ -1,3 +1,27 @@
+# Binaries and build output
 /bin/
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test and profiling output
+*.test
+*.out
+*.prof
+coverage.*
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Local CD audio assets
+/cdda/
+
+# Extracted game assets
+/assets/
+/hdassets/
+
+# OS metadata
 .DS_Store

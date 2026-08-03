@@ -47,7 +47,8 @@ func main() {
 	defer window.Destroy()
 
 	track := loadTrackScenery("TRACK01")
-	surface := loadTrackSurface("TRACK01")
+	surface := loadTrackSurface(renderer, "TRACK01")
+	defer surface.destroy()
 
 	ships := []*game.Ship{
 		{Position: game.Vector3{X: 0, Y: 0, Z: 0}, Velocity: game.Vector3{X: 320, Z: 40}},
@@ -80,8 +81,7 @@ func main() {
 		renderer.SetDrawColor(90, 90, 110, 255)
 		track.draw(renderer)
 
-		renderer.SetDrawColor(255, 90, 200, 255)
-		surface.draw(renderer)
+		surface.draw(renderer) // sets its own color per-face (real tile colors, see trackSurface.draw)
 
 		renderer.SetDrawColor(255, 255, 0, 255)
 		surface.drawSections(renderer)
@@ -196,12 +196,19 @@ type trackSurface struct {
 	vertices []psx.TrackVertex
 	faces    []psx.TrackFace
 	sections []psx.TrackSection
-	scale    float32
-	offsetX  float32
-	offsetZ  float32
+	// tileTextures is each texture tile's real .TIM image, uploaded as an
+	// SDL texture and indexed by TrackFace.Tile -- real UV-mapped texturing,
+	// not the flat per-face average-color stand-in this replaced.
+	tileTextures []*sdl.Texture
+	// tileColors is the same per-tile average RGB as before, kept only as
+	// the fallback color for tiles whose texture failed to load.
+	tileColors [][3]uint8
+	scale      float32
+	offsetX    float32
+	offsetZ    float32
 }
 
-func loadTrackSurface(trackDir string) trackSurface {
+func loadTrackSurface(renderer *sdl.Renderer, trackDir string) trackSurface {
 	base := wipeoutDiscPath + "/" + trackDir
 	trvData, err := os.ReadFile(base + "/TRACK.TRV")
 	if err != nil {
@@ -236,6 +243,8 @@ func loadTrackSurface(trackDir string) trackSurface {
 		sections = nil
 	}
 
+	tileTextures, tileColors := loadTileTextures(renderer, base+"/TRACK.CMP")
+
 	minX, maxX := int32(0), int32(0)
 	minZ, maxZ := int32(0), int32(0)
 	for i, v := range vertices {
@@ -267,31 +276,137 @@ func loadTrackSurface(trackDir string) trackSurface {
 		len(vertices), len(faces), len(sections), spanX, spanZ, scale)
 
 	return trackSurface{
-		vertices: vertices,
-		faces:    faces,
-		sections: sections,
-		scale:    scale,
-		offsetX:  -float32(minX),
-		offsetZ:  -float32(minZ),
+		vertices:     vertices,
+		faces:        faces,
+		sections:     sections,
+		tileTextures: tileTextures,
+		tileColors:   tileColors,
+		scale:        scale,
+		offsetX:      -float32(minX),
+		offsetZ:      -float32(minZ),
+	}
+}
+
+// loadTileTextures decodes a .CMP texture bundle (e.g. TRACK.CMP) into one
+// real SDL texture per member .TIM, plus that same image's average RGB as a
+// fallback color for members that fail to decode or upload. Returns (nil,
+// nil) if the bundle can't be loaded -- callers fall back to a flat draw
+// color, same as when track data itself is missing.
+func loadTileTextures(renderer *sdl.Renderer, cmpPath string) ([]*sdl.Texture, [][3]uint8) {
+	data, err := os.ReadFile(cmpPath)
+	if err != nil {
+		log.Printf("tile textures not loaded (%v)", err)
+		return nil, nil
+	}
+	members, err := psx.DecodeCMP(data)
+	if err != nil {
+		log.Printf("%s parse failed (%v)", cmpPath, err)
+		return nil, nil
+	}
+
+	textures := make([]*sdl.Texture, len(members))
+	colors := make([][3]uint8, len(members))
+	loaded := 0
+	for i, m := range members {
+		img, err := psx.DecodeTIM(m)
+		if err != nil {
+			continue // not every CMP member is necessarily a TIM
+		}
+
+		var sumR, sumG, sumB, n uint64
+		for p := 0; p+3 < len(img.Pixels); p += 4 {
+			if img.Pixels[p+3] == 0 {
+				continue // color-key transparent (pure black source pixel) -- not a real color
+			}
+			sumR += uint64(img.Pixels[p])
+			sumG += uint64(img.Pixels[p+1])
+			sumB += uint64(img.Pixels[p+2])
+			n++
+		}
+		if n > 0 {
+			colors[i] = [3]uint8{uint8(sumR / n), uint8(sumG / n), uint8(sumB / n)}
+		}
+
+		if img.Width == 0 || img.Height == 0 {
+			continue
+		}
+		tex, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGBA8888, sdl.TEXTUREACCESS_STATIC, img.Width, img.Height)
+		if err != nil {
+			log.Printf("tile %d: texture create failed (%v)", i, err)
+			continue
+		}
+		if err := tex.Update(nil, img.Pixels, int32(img.Width*4)); err != nil {
+			log.Printf("tile %d: texture upload failed (%v)", i, err)
+			tex.Destroy()
+			continue
+		}
+		// Color-key transparency (see tim.go) relies on alpha, so blend it.
+		if err := tex.SetBlendMode(sdl.BLENDMODE_BLEND); err != nil {
+			log.Printf("tile %d: blend mode failed (%v)", i, err)
+		}
+		textures[i] = tex
+		loaded++
+	}
+
+	log.Printf("loaded %d/%d tile textures from %s", loaded, len(members), cmpPath)
+	return textures, colors
+}
+
+func (t trackSurface) destroy() {
+	for _, texture := range t.tileTextures {
+		if texture != nil {
+			texture.Destroy()
+		}
 	}
 }
 
 func (t trackSurface) draw(renderer *sdl.Renderer) {
 	const margin = 40.0
+	const fallbackR, fallbackG, fallbackB = 255, 90, 200 // no/blank tile data
+
+	// Standard full-tile UV mapping: .TRF carries no per-vertex UVs (see
+	// psx.TrackFace), just a tile index, so each face's corners map to a
+	// tile's four corners in a fixed winding -- the only reasonable
+	// inference for PS1-style tile-based track texturing.
+	quadUV := [4]sdl.FPoint{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}, {X: 0, Y: 1}}
+
 	for _, f := range t.faces {
+		var tex *sdl.Texture
+		col := sdl.FColor{R: fallbackR / 255.0, G: fallbackG / 255.0, B: fallbackB / 255.0, A: 1}
+		if int(f.Tile) < len(t.tileTextures) {
+			tex = t.tileTextures[f.Tile]
+		}
+		if tex == nil && int(f.Tile) < len(t.tileColors) {
+			if c := t.tileColors[f.Tile]; c != ([3]uint8{}) {
+				col = sdl.FColor{R: float32(c[0]) / 255.0, G: float32(c[1]) / 255.0, B: float32(c[2]) / 255.0, A: 1}
+			}
+		}
+		if tex != nil {
+			// White so the texture's own colors show through unmodulated.
+			col = sdl.FColor{R: 1, G: 1, B: 1, A: 1}
+		}
+
 		n := 4
 		if f.Indices[2] == f.Indices[3] {
 			n = 3 // triangle: last index repeats, per wipeout.js's TrackFace layout
 		}
+		verts := make([]sdl.Vertex, n)
 		for i := 0; i < n; i++ {
-			a := t.vertices[f.Indices[i]]
-			b := t.vertices[f.Indices[(i+1)%n]]
-			ax := (float32(a.X)+t.offsetX)*t.scale + margin
-			az := (float32(a.Z)+t.offsetZ)*t.scale + margin
-			bx := (float32(b.X)+t.offsetX)*t.scale + margin
-			bz := (float32(b.Z)+t.offsetZ)*t.scale + margin
-			renderer.RenderLine(ax, az, bx, bz)
+			v := t.vertices[f.Indices[i]]
+			verts[i] = sdl.Vertex{
+				Position: sdl.FPoint{
+					X: (float32(v.X)+t.offsetX)*t.scale + margin,
+					Y: (float32(v.Z)+t.offsetZ)*t.scale + margin,
+				},
+				Color:    col,
+				TexCoord: quadUV[i],
+			}
 		}
+		indices := []int32{0, 1, 2}
+		if n == 4 {
+			indices = []int32{0, 1, 2, 0, 2, 3} // fan-triangulate the quad
+		}
+		renderer.RenderGeometry(tex, verts, indices)
 	}
 }
 

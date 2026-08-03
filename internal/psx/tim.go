@@ -1,9 +1,5 @@
-// Package psx parses WipEout 2097's original PS1 asset formats (.TIM
-// textures, .CMP compressed bundles, .PRM 3D models). Ported field-for-field
-// from phoboslab's wipeout.js (https://github.com/phoboslab/wipeout), the
-// only known working reference implementation of these formats -- struct
-// layouts and byte offsets here are not guesses, they're a direct port of
-// that project's Struct.create() declarations.
+// Package psx parses WipEout 2097's original PlayStation asset formats,
+// including TIM textures, CMP bundles, PRM models, and track geometry.
 package psx
 
 import (
@@ -13,8 +9,8 @@ import (
 
 // TIM image types, per the PS1 GPU's own packed-pixel formats.
 const (
-	ImagePaletted4BPP  = 0x08
-	ImagePaletted8BPP  = 0x09
+	ImagePaletted4BPP   = 0x08
+	ImagePaletted8BPP   = 0x09
 	ImageTrueColor16BPP = 0x02
 )
 
@@ -29,21 +25,14 @@ type Image struct {
 	Pixels []byte
 }
 
-// imageFileHeader mirrors wipeout.js's Wipeout.ImageFileHeader: 20 bytes,
-// little-endian (the PS1 CPU's own byte order -- .TIM files on disk are
-// little-endian despite the PS1 GPU's internal registers being documented
-// big-endian-first in most references).
-type imageFileHeader struct {
-	Magic         uint32
-	Type          uint32
-	HeaderLength  uint32
-	PaletteX      uint16
-	PaletteY      uint16
-	PaletteColors uint16
-	Palettes      uint16
-}
-
-const imageFileHeaderSize = 20
+// A TIM starts with an eight-byte {magic,type} header. Paletted images then
+// have a CLUT block, while true-color images proceed directly to the image
+// block. All fields are little-endian, matching the PS1 CPU.
+const (
+	timMagic            = 0x10
+	timCommonHeaderSize = 8
+	timBlockHeaderSize  = 12 // byte length, VRAM X/Y, width, height
+)
 
 // imagePixelHeader mirrors Wipeout.ImagePixelHeader: 8 bytes.
 type imagePixelHeader struct {
@@ -55,71 +44,74 @@ type imagePixelHeader struct {
 
 const imagePixelHeaderSize = 8
 
-// DecodeTIM decodes a single .TIM file's bytes into an RGBA image. Ported
-// from Wipeout.prototype.readImage.
+// DecodeTIM decodes a single standard .TIM file into an RGBA image.
 func DecodeTIM(data []byte) (*Image, error) {
-	if len(data) < imageFileHeaderSize {
+	if len(data) < timCommonHeaderSize {
 		return nil, fmt.Errorf("psx: TIM file too short (%d bytes)", len(data))
 	}
 
-	file := imageFileHeader{
-		Magic:         binary.LittleEndian.Uint32(data[0:4]),
-		Type:          binary.LittleEndian.Uint32(data[4:8]),
-		HeaderLength:  binary.LittleEndian.Uint32(data[8:12]),
-		PaletteX:      binary.LittleEndian.Uint16(data[12:14]),
-		PaletteY:      binary.LittleEndian.Uint16(data[14:16]),
-		PaletteColors: binary.LittleEndian.Uint16(data[16:18]),
-		Palettes:      binary.LittleEndian.Uint16(data[18:20]),
+	if magic := binary.LittleEndian.Uint32(data[0:4]); magic != timMagic {
+		return nil, fmt.Errorf("psx: invalid TIM magic 0x%x", magic)
 	}
-	offset := imageFileHeaderSize
+	typ := binary.LittleEndian.Uint32(data[4:8])
+	offset := timCommonHeaderSize
 
 	var palette []uint16
-	if file.Type == ImagePaletted4BPP || file.Type == ImagePaletted8BPP {
-		n := int(file.PaletteColors)
-		if offset+n*2 > len(data) {
-			return nil, fmt.Errorf("psx: TIM palette runs past end of file")
+	if typ == ImagePaletted4BPP || typ == ImagePaletted8BPP {
+		if offset+timBlockHeaderSize > len(data) {
+			return nil, fmt.Errorf("psx: TIM CLUT header runs past end of file")
+		}
+		blockLength := int(binary.LittleEndian.Uint32(data[offset : offset+4]))
+		colors := int(binary.LittleEndian.Uint16(data[offset+8 : offset+10]))
+		palettes := int(binary.LittleEndian.Uint16(data[offset+10 : offset+12]))
+		if blockLength < timBlockHeaderSize || blockLength > len(data)-offset {
+			return nil, fmt.Errorf("psx: TIM CLUT block length %d is invalid", blockLength)
+		}
+		n := colors * palettes
+		if n == 0 || timBlockHeaderSize+n*2 > blockLength {
+			return nil, fmt.Errorf("psx: TIM palette dimensions %dx%d exceed its block", colors, palettes)
 		}
 		palette = make([]uint16, n)
 		for i := 0; i < n; i++ {
-			palette[i] = binary.LittleEndian.Uint16(data[offset+i*2 : offset+i*2+2])
+			pos := offset + timBlockHeaderSize + i*2
+			palette[i] = binary.LittleEndian.Uint16(data[pos : pos+2])
 		}
-		offset += n * 2
+		offset += blockLength
 	}
-	offset += 4 // skip the pixel data block's own byte-length field
 
 	pixelsPerShort := 1
-	switch file.Type {
+	switch typ {
 	case ImagePaletted8BPP:
 		pixelsPerShort = 2
 	case ImagePaletted4BPP:
 		pixelsPerShort = 4
+	case ImageTrueColor16BPP:
+	default:
+		return nil, fmt.Errorf("psx: unknown TIM image type 0x%x", typ)
 	}
 
-	if offset+imagePixelHeaderSize > len(data) {
+	if offset+timBlockHeaderSize > len(data) {
 		return nil, fmt.Errorf("psx: TIM pixel header runs past end of file")
 	}
-	dim := imagePixelHeader{
-		SkipX:  binary.LittleEndian.Uint16(data[offset : offset+2]),
-		SkipY:  binary.LittleEndian.Uint16(data[offset+2 : offset+4]),
-		Width:  binary.LittleEndian.Uint16(data[offset+4 : offset+6]),
-		Height: binary.LittleEndian.Uint16(data[offset+6 : offset+8]),
+	blockLength := int(binary.LittleEndian.Uint32(data[offset : offset+4]))
+	if blockLength < timBlockHeaderSize || blockLength > len(data)-offset {
+		return nil, fmt.Errorf("psx: TIM pixel block length %d is invalid", blockLength)
 	}
-	offset += imagePixelHeaderSize
+	dim := imagePixelHeader{
+		SkipX:  binary.LittleEndian.Uint16(data[offset+4 : offset+6]),
+		SkipY:  binary.LittleEndian.Uint16(data[offset+6 : offset+8]),
+		Width:  binary.LittleEndian.Uint16(data[offset+8 : offset+10]),
+		Height: binary.LittleEndian.Uint16(data[offset+10 : offset+12]),
+	}
+	offset += timBlockHeaderSize
 
 	width := int(dim.Width) * pixelsPerShort
 	height := int(dim.Height)
 	entries := int(dim.Width) * int(dim.Height)
 
-	// Not every .TIM-extension file on the disc is a single conventional
-	// image -- e.g. LEGALPAL.TIM's pixel header reads as
-	// skipX=skipY=width=height=0x8000, which isn't a real 32768x32768
-	// texture; something in the real game reads it differently, not
-	// through this generic path. Whatever it turns out to be, this parser
-	// should report that cleanly instead of computing a bogus multi-GB
-	// pixel count and panicking on an out-of-bounds read.
-	if entries < 0 || offset+entries*2 > len(data) {
+	if entries == 0 || entries*2 > blockLength-timBlockHeaderSize {
 		return nil, fmt.Errorf(
-			"psx: TIM pixel data (%dx%d, %d entries) runs past end of file -- not a conventional single image",
+			"psx: TIM pixel data (%dx%d, %d entries) exceeds its block",
 			dim.Width, dim.Height, entries,
 		)
 	}
@@ -140,7 +132,7 @@ func DecodeTIM(data []byte) (*Image, error) {
 		}
 	}
 
-	switch file.Type {
+	switch typ {
 	case ImageTrueColor16BPP:
 		for i := 0; i < entries; i++ {
 			c := binary.LittleEndian.Uint16(data[offset+i*2 : offset+i*2+2])
@@ -160,8 +152,6 @@ func DecodeTIM(data []byte) (*Image, error) {
 			putPixel(pixels, i*16+8, palette[(p>>8)&0xf])
 			putPixel(pixels, i*16+12, palette[(p>>12)&0xf])
 		}
-	default:
-		return nil, fmt.Errorf("psx: unknown TIM image type 0x%x", file.Type)
 	}
 
 	return &Image{Width: width, Height: height, Pixels: pixels}, nil
