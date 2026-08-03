@@ -1,9 +1,13 @@
-package game
+package render
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/tridentsx/wipeout-go/internal/game"
+)
 
 func TestNewChaseCameraFollowsBehindShip(t *testing.T) {
-	ship := &Ship{Position: Vector3{X: 0, Y: 0, Z: 0}, Yaw: 0} // facing +Z
+	ship := &game.Ship{Position: game.Vector3{X: 0, Y: 0, Z: 0}, Yaw: 0} // facing +Z
 	cam := NewChaseCamera(ship)
 
 	if cam.Position.Z >= 0 {
@@ -15,8 +19,8 @@ func TestNewChaseCameraFollowsBehindShip(t *testing.T) {
 }
 
 func TestProjectTopDownShipAheadIsPositiveZ(t *testing.T) {
-	cam := Camera{Position: Vector3{X: 0, Y: 0, Z: -40}, Yaw: 0}
-	_, z := cam.ProjectTopDown(Vector3{X: 0, Y: 0, Z: 0})
+	cam := Camera{Position: game.Vector3{X: 0, Y: 0, Z: -40}, Yaw: 0}
+	_, z := cam.ProjectTopDown(game.Vector3{X: 0, Y: 0, Z: 0})
 	if z <= 0 {
 		t.Errorf("expected a point ahead of the camera to project to positive Z, got %v", z)
 	}

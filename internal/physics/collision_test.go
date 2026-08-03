@@ -1,4 +1,4 @@
-package game
+package physics
 
 import (
 	"math"

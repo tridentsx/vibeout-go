@@ -106,9 +106,13 @@ const (
 type TrackSection struct {
 	NextJunction, Previous, Next int32
 	X, Y, Z                      int32
-	FirstFace                    uint32
-	NumFaces                     uint16
-	Flags                        uint16
+	// ViewCounts are fifteen list lengths at offsets 0x60..0x7a, arranged
+	// as three lanes of five lists. InitViewList uses them to partition
+	// TRACK.VEW and attach fifteen visibility-list pointers per section.
+	ViewCounts [3][5]uint16
+	FirstFace  uint32
+	NumFaces   uint16
+	Flags      uint16
 }
 
 const trackSectionSize = 156
@@ -128,12 +132,17 @@ func DecodeTRS(data []byte) ([]TrackSection, error) {
 			X:            int32(binary.BigEndian.Uint32(data[off+12 : off+16])),
 			Y:            int32(binary.BigEndian.Uint32(data[off+16 : off+20])),
 			Z:            int32(binary.BigEndian.Uint32(data[off+20 : off+24])),
-			// off+24:off+140 (116 bytes) skipped, matching Wipeout.TrackSection.
-			FirstFace: binary.BigEndian.Uint32(data[off+140 : off+144]),
-			NumFaces:  binary.BigEndian.Uint16(data[off+144 : off+146]),
+			FirstFace:    binary.BigEndian.Uint32(data[off+140 : off+144]),
+			NumFaces:     binary.BigEndian.Uint16(data[off+144 : off+146]),
 			// off+146:off+150 (4 bytes) skipped.
 			Flags: binary.BigEndian.Uint16(data[off+150 : off+152]),
 			// off+152:off+156 (4 bytes) skipped.
+		}
+		for lane := range sections[i].ViewCounts {
+			for group := range sections[i].ViewCounts[lane] {
+				countOffset := off + 96 + group*6 + lane*2
+				sections[i].ViewCounts[lane][group] = binary.BigEndian.Uint16(data[countOffset : countOffset+2])
+			}
 		}
 	}
 	return sections, nil

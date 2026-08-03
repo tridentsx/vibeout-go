@@ -2,6 +2,9 @@ package psx
 
 import (
 	"encoding/binary"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -66,5 +69,35 @@ func TestDecodeTIMRejectsInvalidMagic(t *testing.T) {
 	_, err := DecodeTIM(make([]byte, 20))
 	if err == nil {
 		t.Fatal("DecodeTIM accepted invalid magic")
+	}
+}
+
+func TestDecodeEveryRealTIMFile(t *testing.T) {
+	if _, err := os.Stat(wipeoutDiscPath); err != nil {
+		t.Skip("disc image not present:", err)
+	}
+	count := 0
+	err := filepath.Walk(wipeoutDiscPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.EqualFold(filepath.Ext(path), ".TIM") {
+			return err
+		}
+		count++
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		image, err := DecodeTIM(data)
+		if err != nil {
+			t.Errorf("%s: %v", path, err)
+		} else if len(image.Pixels) != image.Width*image.Height*4 {
+			t.Errorf("%s: invalid RGBA length %d", path, len(image.Pixels))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 53 {
+		t.Fatalf("decoded %d TIM files, want 53", count)
 	}
 }

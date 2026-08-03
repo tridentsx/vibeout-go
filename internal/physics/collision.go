@@ -1,9 +1,9 @@
-package game
+package physics
 
 import (
 	"math"
 
-	"github.com/tridentsx/wipeout-go/internal/psx"
+	"github.com/tridentsx/wipeout-go/internal/assets"
 )
 
 // PlaneDistance ports the confirmed plane-distance primitive `sub_8003598c`
@@ -47,7 +47,7 @@ const q12Scale = 4096.0
 
 // FaceNormal converts a psx.TrackFace's raw Q12 normal into a true
 // float32 unit vector, for use with PlaneDistance.
-func FaceNormal(f psx.TrackFace) Vector3 {
+func FaceNormal(f assets.TrackFace) Vector3 {
 	return Vector3{
 		X: float32(f.NormalX) / q12Scale,
 		Y: float32(f.NormalY) / q12Scale,
@@ -57,7 +57,7 @@ func FaceNormal(f psx.TrackFace) Vector3 {
 
 // faceVertex0 returns a TrackFace's first vertex as a game Vector3,
 // converting from psx.TrackVertex's raw int32 world-space coordinates.
-func faceVertex0(f psx.TrackFace, verts []psx.TrackVertex) Vector3 {
+func faceVertex0(f assets.TrackFace, verts []assets.TrackVertex) Vector3 {
 	v := verts[f.Indices[0]]
 	return Vector3{X: float32(v.X), Y: float32(v.Y), Z: float32(v.Z)}
 }
@@ -69,8 +69,8 @@ func faceVertex0(f psx.TrackFace, verts []psx.TrackVertex) Vector3 {
 // surface, confirmed via psx/track.go's existing flag definitions (ported
 // from wipeout.js, independently corroborated by this session's own
 // WO_TrackFaceFlags struct read from the binary).
-func isWallFace(f psx.TrackFace) bool {
-	return f.Flags&psx.TrackFaceTrack == 0
+func isWallFace(f assets.TrackFace) bool {
+	return f.Flags&assets.TrackFaceTrack == 0
 }
 
 // NearestWallDistance finds the minimum PlaneDistance among all
@@ -180,7 +180,7 @@ func WallCollisionResponse(position, velocity Vector3, normal Vector3, penetrati
 	return position, newVelocity
 }
 
-func NearestWallDistance(point Vector3, section psx.TrackSection, faces []psx.TrackFace, verts []psx.TrackVertex) (faceIndex int, distance float32, ok bool) {
+func NearestWallDistance(point Vector3, section assets.TrackSection, faces []assets.TrackFace, verts []assets.TrackVertex) (faceIndex int, distance float32, ok bool) {
 	start := int(section.FirstFace)
 	end := start + int(section.NumFaces)
 	if start < 0 || end > len(faces) {
@@ -269,7 +269,7 @@ const pointInsideFaceTolerance = 0.01 // radians
 // own 4th corner repeats the 3rd, per the hunt doc's session 12 notes) --
 // summing 3 vs. 4 angles converges on the same "close to a full turn" test
 // either way, without needing a neighboring face's data at all.
-func PointInsideFace(point Vector3, f psx.TrackFace, verts []psx.TrackVertex) bool {
+func PointInsideFace(point Vector3, f assets.TrackFace, verts []assets.TrackVertex) bool {
 	corners := f.Indices[:]
 	if f.Indices[3] == f.Indices[2] {
 		corners = f.Indices[:3]
@@ -337,7 +337,7 @@ func PointInsideFace(point Vector3, f psx.TrackFace, verts []psx.TrackVertex) bo
 // only for a short list of nearby candidate faces, e.g. via section-local
 // spatial binning) but it wasn't traced this session -- callers should treat
 // this parameter as a real, uncalibrated gap, not a confirmed value.
-func ResolveShipWallCollision(s *Ship, section psx.TrackSection, faces []psx.TrackFace, verts []psx.TrackVertex, contactDistance float32) bool {
+func ResolveShipWallCollision(s *Ship, section assets.TrackSection, faces []assets.TrackFace, verts []assets.TrackVertex, contactDistance float32) bool {
 	faceIdx, distance, ok := NearestWallDistance(s.Position, section, faces, verts)
 	if !ok || distance <= -contactDistance {
 		return false

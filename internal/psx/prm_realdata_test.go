@@ -3,6 +3,7 @@ package psx
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,23 +18,21 @@ func beU16(data []byte, offset int) uint16 {
 }
 
 var validPolygonTypes = map[uint16]bool{
-	0x00: true, 0x01: true, 0x02: true, 0x03: true, 0x04: true, 0x05: true,
-	0x06: true, 0x07: true, 0x08: true, 0x0A: true, 0x0B: true,
+	1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true, 8: true,
+	10: true, 11: true, 12: true, 13: true, 14: true, 15: true, 16: true,
+	17: true, 18: true, 19: true, 20: true, 21: true, 22: true, 23: true,
+}
+
+func isEditorPRM(path string) bool {
+	path = strings.ToUpper(filepath.ToSlash(path))
+	return strings.HasSuffix(path, "/COMMON/SKY.PRM") ||
+		strings.HasSuffix(path, "/COMMON/TRACK.PRM") ||
+		strings.HasSuffix(path, "/TRACK08/TRAK2.PRM")
 }
 
 // TestRealPRMFilesParseCleanly decodes every .PRM file on the real disc and
-// checks each polygon's computed byte length actually lands on a valid next
-// polygon header. Type 0x00 is a known, open question -- see DecodePRM's
-// doc comment -- and is responsible for the overwhelming majority of
-// mismatches found this way (11 of 12, all traceable to that same
-// ambiguity via cascading offsets within one file). The one remaining
-// mismatch (type 0x03, TRAK2.PRM offset 26168, a fresh object's very first
-// polygon -- not a cascade from anything earlier) is a genuine, still-
-// unexplained anomaly in this one specific spot; every other 0x03 instance
-// in the corpus (3762 of them) parses correctly. A handful of isolated
-// mismatches is tolerated per type; a large jump (real types are otherwise
-// 100% correct across tens of thousands of real polygons) means an actual
-// formula regression and should fail this test.
+// checks each polygon's binary-confirmed byte length lands exactly on the
+// next valid polygon or object boundary.
 func TestRealPRMFilesParseCleanly(t *testing.T) {
 	if _, err := os.Stat(wipeoutDiscPath); err != nil {
 		t.Skip("disc image not present:", err)
@@ -46,6 +45,9 @@ func TestRealPRMFilesParseCleanly(t *testing.T) {
 		if err != nil || info.IsDir() || filepath.Ext(path) != ".PRM" {
 			return nil
 		}
+		if isEditorPRM(path) {
+			return nil
+		}
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return nil
@@ -54,8 +56,9 @@ func TestRealPRMFilesParseCleanly(t *testing.T) {
 		offset := 0
 		for offset+objectHeaderSize <= len(data) {
 			vertexCount := int(beU16(data, offset+16))
+			normalCount := int(beU16(data, offset+24))
 			polygonCount := int(beU16(data, offset+32))
-			offset += objectHeaderSize + vertexCount*8
+			offset += objectHeaderSize + (vertexCount+normalCount)*8
 			if offset > len(data) {
 				break
 			}
@@ -90,20 +93,40 @@ func TestRealPRMFilesParseCleanly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Known baseline (see the doc comment above): 11 isolated mismatches on
-	// the acknowledged-ambiguous type 0x00, plus one unexplained type 0x03
-	// mismatch that isn't a cascade from anything earlier. A real formula
-	// regression would show up as a large jump in bad counts (cascading
-	// desync affects every polygon after the first miss), not one or two
-	// more isolated instances -- so tolerate a small absolute count per
-	// type, scaled to a bit above each known baseline, and fail loudly on
-	// anything bigger.
-	tolerance := map[uint16]int{0x00: 20, 0x03: 5}
 	for polyType, s := range stats {
-		limit := tolerance[polyType]
-		if s.bad > limit {
-			t.Errorf("polygon type 0x%02x: %d ok, %d bad (tolerance %d) -- looks like a real formula regression",
-				polyType, s.ok, s.bad, limit)
+		if s.bad != 0 {
+			t.Errorf("polygon type 0x%02x: %d ok, %d bad", polyType, s.ok, s.bad)
 		}
+	}
+}
+
+func TestDecodeEveryRealPRMFile(t *testing.T) {
+	if _, err := os.Stat(wipeoutDiscPath); err != nil {
+		t.Skip("disc image not present:", err)
+	}
+	runtimeCount, editorCount := 0, 0
+	err := filepath.Walk(wipeoutDiscPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || filepath.Ext(path) != ".PRM" {
+			return err
+		}
+		if isEditorPRM(path) {
+			editorCount++
+			return nil
+		}
+		runtimeCount++
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if _, err := DecodePRM(data); err != nil {
+			t.Errorf("%s: %v", path, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeCount != 48 || editorCount != 3 {
+		t.Fatalf("found %d runtime and %d editor PRM files, want 48 and 3", runtimeCount, editorCount)
 	}
 }

@@ -1,11 +1,13 @@
-package game
+package render
+
+import "github.com/tridentsx/wipeout-go/internal/game"
 
 // Camera is this project's viewpoint for rendering. Position/orientation
 // only, no projection math -- how it's applied to a given renderer is that
 // renderer's concern.
 type Camera struct {
-	Position Vector3
-	Yaw      Angle // heading the camera is looking along, XZ plane
+	Position game.Vector3
+	Yaw      game.Angle // heading the camera is looking along, XZ plane
 }
 
 // PLACEHOLDER CAMERA -- NOT REVERSE-ENGINEERED. See TODO.md "Camera system"
@@ -25,13 +27,13 @@ type Camera struct {
 // any constant or behavior in this function as derived from the original
 // game -- replace this function's body, not just its constants, once the
 // real formula is found.
-func NewChaseCamera(ship *Ship) Camera {
+func NewChaseCamera(ship *game.Ship) Camera {
 	const followDistance = 40.0
 	const followHeight = 12.0
 
-	forward := Vector3{X: ship.Yaw.Sin(), Z: ship.Yaw.Cos()}
+	forward := game.Vector3{X: ship.Yaw.Sin(), Z: ship.Yaw.Cos()}
 	return Camera{
-		Position: Vector3{
+		Position: game.Vector3{
 			X: ship.Position.X - forward.X*followDistance,
 			Y: ship.Position.Y + followHeight,
 			Z: ship.Position.Z - forward.Z*followDistance,
@@ -46,7 +48,7 @@ func NewChaseCamera(ship *Ship) Camera {
 // stand-in used by the current line-wireframe smoke-test renderer -- not
 // the real GPU-API perspective projection from TODO.md's rendering
 // approach, which will replace this entirely, camera formula or not.
-func (c Camera) ProjectTopDown(p Vector3) (x, z float32) {
+func (c Camera) ProjectTopDown(p game.Vector3) (x, z float32) {
 	dx := p.X - c.Position.X
 	dz := p.Z - c.Position.Z
 	sin, cos := c.Yaw.Sin(), c.Yaw.Cos()

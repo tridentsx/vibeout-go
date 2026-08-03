@@ -69,32 +69,94 @@ we're targeting high-res/modern rather than bit-exact PS1 behavior:
   warping is an easy option once we're not bound to GTE math — explicitly
   **not decided yet**, revisit once the base renderer works.
 - Vertex transform math: plain float32 matrices are almost certainly fine;
-  no need to replicate GTE's fixed-point quirks unless bit-exact behavior
-  ever matters.
+no need to replicate GTE's fixed-point quirks unless bit-exact behavior
+ever matters.
+
+## Runtime modules
+
+Subsystem boundaries are now explicit; see `docs/architecture.md` for the
+dependency rules. `game` owns state, `physics` owns simulation, `render` owns
+SDL presentation resources, `assets` composes the low-level `psx` decoders,
+and `audio/sfx` and `audio/music` have independent playback contracts. `main`
+is only the composition root.
 
 ## Asset pipeline
 
-`internal/psx/` — original PS1 asset format parsers, ported field-for-field
-from phoboslab's `wipeout.js` (the working reference for these formats),
-validated against all 174 `.TIM`/`.CMP`/`.PRM` files on the real disc:
+`internal/psx/` — original PS1 asset format parsers. Binary-confirmed retail
+layouts take precedence over the older reference implementation and are
+validated against the extracted corpus:
 
 - [x] `tim.go` — `.TIM` texture decoder (4bpp/8bpp paletted, 16bpp
-      true-color). Note: a handful of `.TIM`-extension files on the disc
-      (`LEGALPAL.TIM`, `MENUPIC.TIM`, `WIPTITLE.TIM`, others) aren't
-      conventional single images — returns a clean error, but what these
-      files actually are is still uninvestigated.
+      true-color), validated across all 53 files. The previously reported 11
+      menu/title failures were stale; they are valid large 16bpp TIMs ranging
+      from 320x240 to 640x256 and decode normally.
 - [x] `cmp.go` — `.CMP` compressed bundle unpacker (custom bitfield-driven
       LZ77 variant).
-- [x] `prm.go` — `.PRM` 3D model parser (objects/vertices/polygons).
-      Note: polygon type `0x00` is an open question even upstream
-      (phoboslab's own README: "possibly padding?") — `DecodePRM` returns
-      partial results rather than failing the whole file over it.
+- [x] `track.go`, `vew.go`, `chk.go`, `tex.go`, `ttf.go` — retail track
+      vertices/faces/sections, section visibility lists, checkpoints, binary
+      track texture assignments (plus text texture manifests), and 42-byte
+      game-specific TTF records. Their endian handling follows the retail
+      loaders: TRV/TRF/TRS/VEW/TTF are big-endian and explicitly swapped;
+      CHK and TRACK.TEX are copied in native little-endian form.
+- [x] `wad.go` — little-endian 25-byte WAD directory entries and payload
+      extraction, validated across all 11 archives. Every corpus entry is
+      uncompressed (`flags=0`, stored size equals unpacked size).
+- [x] `menu.go` — `COMMON/MENU.DAT` line-art table. The retail loader copies
+      4,212 little-endian 16-byte records and ignores 351 retained trailing
+      records; both sets are parsed and preserved separately.
+
+### Retained development artifacts (not retail asset loaders)
+
+The remaining track-development extensions were searched across the main
+executable, all five animation executables, every WAD directory/payload, every
+decompressed CMP member, and ASCII/UTF-16/16-bit-swapped/32-bit-swapped filename
+representations. None is requested by retail code:
+
+- `.INF` — CRLF converter reports with source database/scene paths and the
+  exact `track10`/scene conversion command line.
+- `.MNU` — human-readable track build menus invoking `gettrk`, `getscn`, and
+  `mkwad`.
+- `.OUT`/`.BAK` — converter logs and backups; `.RST` — editor state files.
+- `.VPO`/`.VRA` — text VRAM packing manifests naming source TIM paths and
+  screen rectangles.
+- `.SCN`, `.ROB`, and `RACELINE.BIN` — binary source/intermediate track data;
+  their names are absent from the executables and WADs. Runtime products are
+  the specialized TRV/TRF/TRS/VEW/CHK/TTF/TEX and SCENE/SKY PRM files instead.
+
+These files belong to an optional future editor/converter importer, not the
+retail loading compatibility target. They should remain preserved and clearly
+classified rather than being accepted by unrelated runtime decoders.
+
+- [x] `av.go` / `mdec.go` — fully decode all five retail intro `.AV` streams.
+      The files are 2048-byte cooked sectors with seven standard STR/MDEC video
+      sectors followed by one headerless 4-bit stereo XA ADPCM sector. The
+      XTRO1 executable confirms the version-1 MPEG run/level VLC expansion and
+      PSX MDEC DMA path; the Go decoder performs VLC expansion, dequantization,
+      IDCT, 4:2:0 color conversion, and RGBA output. Corpus validation covers
+      4,204 video frames and 3,157 audio sectors, including zero-filled unused
+      video slots after several final frames. Sampled first/middle/final frames
+      from every movie decode successfully, and independent FFmpeg comparison
+      of a reference frame measured 51.1 dB PSNR (rounding-only differences).
+- [x] `prm.go` — retail `.PRM` 3D model parser, including object normals and
+      all 22 valid primitive record sizes from `LoadPrm`/`IntelPrim`. It
+      decodes all 48 runtime PRMs. Three retained development files
+      (`COMMON/SKY.PRM`, `COMMON/TRACK.PRM`, `TRACK08/TRAK2.PRM`) use an
+      expanded editor/interchange layout and are intentionally classified
+      separately: neither their exact names nor endian-swapped spellings are
+      referenced by the executable, CMP payloads, or WAD directories. Every
+      retail track WAD instead contains `track.trv`, `track.trf`, `track.trs`,
+      `track.vew`, `scene.prm`, and `sky.prm`. `TRACK.INF` records the PC-side
+      `track10` conversion command that produced those specialized runtime
+      files from source scenes. Do not add guessed editor record sizes to the
+      retail decoder; reverse engineer that source format separately if an
+      editor/importer is wanted.
 - [x] `cmd/inspect` — CLI for spot-checking parser output against real
       files during development.
-- [ ] **VAG decoder** — original SFX format (PS1 ADPCM, confirmed
-      referenced as e.g. `shipship.vag` in the binary's debug strings).
-      Needs its own small decoder, same shape of work as the parsers
-      above; VAG's ADPCM scheme is simple and well-documented.
+- [x] `vag.go` — VAGp header and PS1 SPU ADPCM decoder, validated across all
+      39 samples in `SAMPLES.WAD`. The binary-confirmed loader uses big-endian
+      header size/rate fields and uploads data at offset 0x30. `three.vag`
+      retains 448 bytes after its declared upload length; these are preserved
+      but ignored exactly as the retail loader does.
 - [ ] Texture/font **replacement/override layer** — deliberately deferred.
       The two HD texture packs already downloaded
       (`~/Downloads/WipEout-2097-HD-Texture-Pack.zip`, `WipEout 2097-XL -
@@ -127,7 +189,7 @@ instruction in the executable (confirmed not an overlay either — checked
 against the actual disc contents) — this remains the one open question in
 an otherwise-resolved physics picture.
 
-## Game logic port (`internal/game/`)
+## Game logic port (`internal/game/` state, `internal/physics/` simulation)
 
 Started converting confirmed reverse-engineered logic into Go, per the
 authority rule above:
@@ -199,7 +261,7 @@ authority rule above:
 
 ### 🔴 OPEN ITEM: camera system is a placeholder, not reverse-engineered
 
-`internal/game/camera.go`'s `NewChaseCamera` is a **standard, hand-picked
+`internal/render/camera.go`'s `NewChaseCamera` is a **standard, hand-picked
 third-person chase camera** (behind + above the ship, following its
 heading) — explicitly **not** derived from the real binary, unlike
 everything else in `internal/game/`. This breaks from the authority rule

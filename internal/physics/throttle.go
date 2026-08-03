@@ -1,4 +1,4 @@
-package game
+package physics
 
 // UpdateThrottle ramps a ship's Speed toward a throttle-derived target,
 // porting maybe_IntegrateShipPhysicsFromPadInput's opening block

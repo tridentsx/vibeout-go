@@ -1,4 +1,4 @@
-package game
+package physics
 
 // Sign convention for SteeringRate throughout this file: positive = left,
 // negative = right. This matches the confirmed empirical behavior of the

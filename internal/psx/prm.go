@@ -5,21 +5,32 @@ import (
 	"fmt"
 )
 
-// Polygon types, per wipeout.js's Wipeout.POLYGON_TYPE. UNKNOWN_00 and the
-// sprite-anchor distinction are exactly as unresolved in the original
-// project as they are here -- see wipeout/README.md's "Known Problems".
+// Polygon types accepted by WipEout 2097's IntelPrim/LoadPrm dispatch table.
+// Types 3 and 9 route to the loader's bad-primitive error. Types above 11
+// are 2097 additions whose renderer semantics still need naming.
 const (
-	PolygonUnknown00               = 0x00
-	PolygonFlatTrisFaceColor       = 0x01
-	PolygonTexturedTrisFaceColor   = 0x02
-	PolygonFlatQuadFaceColor       = 0x03
-	PolygonTexturedQuadFaceColor   = 0x04
-	PolygonFlatTrisVertexColor     = 0x05
-	PolygonTexturedTrisVertexColor = 0x06
-	PolygonFlatQuadVertexColor     = 0x07
-	PolygonTexturedQuadVertexColor = 0x08
-	PolygonSpriteTopAnchor         = 0x0A
-	PolygonSpriteBottomAnchor      = 0x0B
+	PolygonFlatTrisFaceColor       uint16 = 1
+	PolygonTexturedTrisFaceColor   uint16 = 2
+	PolygonFlatQuadFaceColor       uint16 = 3
+	PolygonTexturedQuadFaceColor   uint16 = 4
+	PolygonFlatTrisVertexColor     uint16 = 5
+	PolygonTexturedTrisVertexColor uint16 = 6
+	PolygonFlatQuadVertexColor     uint16 = 7
+	PolygonTexturedQuadVertexColor uint16 = 8
+	PolygonSpriteTopAnchor         uint16 = 10
+	PolygonSpriteBottomAnchor      uint16 = 11
+	PolygonType12                  uint16 = 12
+	PolygonType13                  uint16 = 13
+	PolygonType14                  uint16 = 14
+	PolygonType15                  uint16 = 15
+	PolygonType16                  uint16 = 16
+	PolygonType17                  uint16 = 17
+	PolygonType18                  uint16 = 18
+	PolygonType19                  uint16 = 19
+	PolygonType20                  uint16 = 20
+	PolygonType21                  uint16 = 21
+	PolygonType22                  uint16 = 22
+	PolygonType23                  uint16 = 23
 )
 
 // Vector3 is a PRM file's 32-bit-per-axis vector (object origin/position).
@@ -55,6 +66,7 @@ type Color struct {
 type ObjectHeader struct {
 	Name         string
 	VertexCount  uint16
+	NormalCount  uint16
 	PolygonCount uint16
 	Index1       uint16
 	Origin       Vector3
@@ -80,6 +92,10 @@ type Polygon struct {
 	SpriteIndex  uint16
 	SpriteWidth  uint16
 	SpriteHeight uint16
+
+	// Raw is the complete on-disc record. It preserves every field while
+	// semantic names for the later 2097-only primitive types are recovered.
+	Raw []byte
 }
 
 // Object is one parsed PRM 3D object (a ship, a track section's decoration,
@@ -87,22 +103,19 @@ type Polygon struct {
 type Object struct {
 	Header   ObjectHeader
 	Vertices []Vertex
+	Normals  []Vertex
 	Polygons []Polygon
 }
 
-// DecodePRM parses every Object in a .PRM file's bytes. Ported from
-// Wipeout.prototype.readObjects/readObject.
+// DecodePRM parses every Object in a retail-runtime .PRM file.
 //
-// Polygon type 0x00 is an open question this format has never had a
-// confirmed answer for -- phoboslab's own wipeout.js README lists it as
-// "possibly padding?", and empirically (checked against every real .PRM
-// file on the WipEout 2097 disc: tens of thousands of polygons) its
-// declared 18-byte size is only wrong in a handful of isolated spots, with
-// every other polygon type (0x01-0x08, 0x0B) parsing correctly 100% of the
-// time. Rather than discard an entire file over one ambiguous polygon deep
-// inside it, DecodePRM returns every Object successfully parsed *before*
-// the failure alongside a non-nil error, so a caller can use what's real
-// instead of getting nothing.
+// Record sizes and valid type IDs come directly from LoadPrm's switch at
+// SLES_003.27 0x80026220. Three files retained in the extracted development
+// tree (COMMON/SKY.PRM, COMMON/TRACK.PRM, and TRACK08/TRAK2.PRM) use an
+// expanded editor/interchange representation. They are neither named by the
+// executable nor present in a WAD directory and are deliberately not guessed
+// at here; the track10 tool recorded in TRACK.INF converted source scenes into
+// the specialized retail TRV/TRF/TRS/VEW and SCENE.PRM/SKY.PRM assets.
 func DecodePRM(data []byte) ([]Object, error) {
 	var objects []Object
 	offset := 0
@@ -124,7 +137,8 @@ func readObject(data []byte, offset int) (Object, int, error) {
 	}
 
 	name := ""
-	for i := 0; i < 15; i++ {
+	nameLimit := 15
+	for i := 0; i < nameLimit; i++ {
 		b := data[offset+i]
 		if b == 0 {
 			break
@@ -135,6 +149,7 @@ func readObject(data []byte, offset int) (Object, int, error) {
 	header := ObjectHeader{
 		Name:         name,
 		VertexCount:  binary.BigEndian.Uint16(data[offset+16 : offset+18]),
+		NormalCount:  binary.BigEndian.Uint16(data[offset+24 : offset+26]),
 		PolygonCount: binary.BigEndian.Uint16(data[offset+32 : offset+34]),
 		Index1:       binary.BigEndian.Uint16(data[offset+56 : offset+58]),
 		Origin: Vector3{
@@ -164,6 +179,19 @@ func readObject(data []byte, offset int) (Object, int, error) {
 		}
 	}
 	offset += int(header.VertexCount) * 8
+	normals := make([]Vertex, header.NormalCount)
+	for i := range normals {
+		vOff := offset + i*8
+		if vOff+8 > len(data) {
+			return Object{}, 0, fmt.Errorf("normal %d runs past end of file", i)
+		}
+		normals[i] = Vertex{
+			X: int16(binary.BigEndian.Uint16(data[vOff : vOff+2])),
+			Y: int16(binary.BigEndian.Uint16(data[vOff+2 : vOff+4])),
+			Z: int16(binary.BigEndian.Uint16(data[vOff+4 : vOff+6])),
+		}
+	}
+	offset += int(header.NormalCount) * 8
 
 	polygons := make([]Polygon, header.PolygonCount)
 	for i := range polygons {
@@ -175,7 +203,7 @@ func readObject(data []byte, offset int) (Object, int, error) {
 		offset += size
 	}
 
-	return Object{Header: header, Vertices: vertices, Polygons: polygons}, offset - start, nil
+	return Object{Header: header, Vertices: vertices, Normals: normals, Polygons: polygons}, offset - start, nil
 }
 
 // readIndices reads n big-endian uint16 vertex indices starting at offset.
@@ -219,75 +247,84 @@ func readPolygon(data []byte, offset int) (Polygon, int, error) {
 		return Polygon{}, 0, fmt.Errorf("polygon header runs past end of file")
 	}
 	polyType := binary.BigEndian.Uint16(data[offset : offset+2])
-	body := offset + 4 // past PolygonHeader{type, subtype}
-
-	texture := func(v uint16) *uint16 { return &v }
-
-	switch polyType {
-	case PolygonUnknown00:
-		// header(4) + uint16[7] = 18 bytes total; contents unused.
-		return Polygon{Type: polyType}, 18, nil
-
-	case PolygonFlatTrisFaceColor:
-		indices := readIndices(data, body, 3)
-		color := readColor(data, body+6+2)
-		return Polygon{Type: polyType, Indices: indices, Color: &color}, 16, nil
-
-	case PolygonTexturedTrisFaceColor:
-		indices := readIndices(data, body, 3)
-		tex := binary.BigEndian.Uint16(data[body+6 : body+8])
-		uv := readUVs(data, body+6+2+4, 3)
-		color := readColor(data, body+6+2+4+6+2)
-		return Polygon{Type: polyType, Indices: indices, Texture: texture(tex), UV: uv, Color: &color}, 28, nil
-
-	case PolygonFlatQuadFaceColor:
-		indices := readIndices(data, body, 4)
-		color := readColor(data, body+8)
-		return Polygon{Type: polyType, Indices: indices, Color: &color}, 16, nil
-
-	case PolygonTexturedQuadFaceColor:
-		indices := readIndices(data, body, 4)
-		tex := binary.BigEndian.Uint16(data[body+8 : body+10])
-		uv := readUVs(data, body+8+2+4, 4)
-		color := readColor(data, body+8+2+4+8+2)
-		return Polygon{Type: polyType, Indices: indices, Texture: texture(tex), UV: uv, Color: &color}, 32, nil
-
-	case PolygonFlatTrisVertexColor:
-		indices := readIndices(data, body, 3)
-		colors := readColors(data, body+6+2, 3)
-		return Polygon{Type: polyType, Indices: indices, Colors: colors}, 24, nil
-
-	case PolygonTexturedTrisVertexColor:
-		indices := readIndices(data, body, 3)
-		tex := binary.BigEndian.Uint16(data[body+6 : body+8])
-		uv := readUVs(data, body+6+2+4, 3)
-		colors := readColors(data, body+6+2+4+6+2, 3)
-		return Polygon{Type: polyType, Indices: indices, Texture: texture(tex), UV: uv, Colors: colors}, 36, nil
-
-	case PolygonFlatQuadVertexColor:
-		indices := readIndices(data, body, 4)
-		colors := readColors(data, body+8, 4)
-		return Polygon{Type: polyType, Indices: indices, Colors: colors}, 28, nil
-
-	case PolygonTexturedQuadVertexColor:
-		indices := readIndices(data, body, 4)
-		tex := binary.BigEndian.Uint16(data[body+8 : body+10])
-		uv := readUVs(data, body+8+2+4, 4)
-		colors := readColors(data, body+8+2+4+8+2, 4)
-		return Polygon{Type: polyType, Indices: indices, Texture: texture(tex), UV: uv, Colors: colors}, 44, nil
-
-	case PolygonSpriteTopAnchor, PolygonSpriteBottomAnchor:
-		index := binary.BigEndian.Uint16(data[body : body+2])
-		width := binary.BigEndian.Uint16(data[body+2 : body+4])
-		height := binary.BigEndian.Uint16(data[body+4 : body+6])
-		tex := binary.BigEndian.Uint16(data[body+6 : body+8])
-		color := readColor(data, body+8)
-		return Polygon{
-			Type: polyType, Texture: texture(tex), Color: &color,
-			SpriteIndex: index, SpriteWidth: width, SpriteHeight: height,
-		}, 16, nil
-
-	default:
+	size, ok := prmPolygonSizes[polyType]
+	if !ok {
 		return Polygon{}, 0, fmt.Errorf("unknown polygon type 0x%x", polyType)
 	}
+	if offset+size > len(data) {
+		return Polygon{}, 0, fmt.Errorf("polygon type 0x%x runs past end of file", polyType)
+	}
+
+	poly := Polygon{Type: polyType, Raw: append([]byte(nil), data[offset:offset+size]...)}
+	// LoadPrm's fixup cases prove that types 1/3/4/6 use three vertex
+	// indices and types 2/5 use four, all beginning immediately after the
+	// four-byte {type,subtype} header.
+	switch polyType {
+	case PolygonFlatTrisFaceColor, PolygonTexturedTrisFaceColor,
+		PolygonFlatTrisVertexColor, PolygonTexturedTrisVertexColor:
+		poly.Indices = readIndices(data, offset+4, 3)
+	case PolygonTexturedQuadFaceColor, PolygonFlatQuadVertexColor, PolygonTexturedQuadVertexColor:
+		poly.Indices = readIndices(data, offset+4, 4)
+	case PolygonFlatQuadFaceColor:
+		poly.Indices = readIndices(data, offset+4, 4)
+	}
+	texture := func(value uint16) *uint16 { return &value }
+	switch polyType {
+	case PolygonTexturedTrisFaceColor, PolygonTexturedTrisVertexColor:
+		poly.Texture = texture(binary.BigEndian.Uint16(data[offset+10 : offset+12]))
+	case PolygonTexturedQuadFaceColor, PolygonTexturedQuadVertexColor, PolygonType13:
+		poly.Texture = texture(binary.BigEndian.Uint16(data[offset+12 : offset+14]))
+	case PolygonType15:
+		poly.Texture = texture(binary.BigEndian.Uint16(data[offset+14 : offset+16]))
+	case PolygonType17:
+		poly.Texture = texture(binary.BigEndian.Uint16(data[offset+16 : offset+18]))
+	case PolygonType19:
+		poly.Texture = texture(binary.BigEndian.Uint16(data[offset+20 : offset+22]))
+	}
+
+	// Semantics for the original primitive family are independently known;
+	// retain the convenient decoded fields in addition to Raw.
+	body := offset + 4
+	switch polyType {
+	case PolygonFlatTrisFaceColor:
+		color := readColor(data, body+8)
+		poly.Color = &color
+	case PolygonTexturedTrisFaceColor:
+		poly.UV = readUVs(data, body+12, 3)
+		color := readColor(data, body+20)
+		poly.Color = &color
+	case PolygonFlatQuadFaceColor:
+		color := readColor(data, body+8)
+		poly.Color = &color
+	case PolygonTexturedQuadFaceColor:
+		poly.UV = readUVs(data, body+14, 4)
+		color := readColor(data, body+24)
+		poly.Color = &color
+	case PolygonFlatTrisVertexColor:
+		poly.Colors = readColors(data, body+8, 3)
+	case PolygonTexturedTrisVertexColor:
+		poly.UV = readUVs(data, body+12, 3)
+		poly.Colors = readColors(data, body+20, 3)
+	case PolygonFlatQuadVertexColor:
+		poly.Colors = readColors(data, body+8, 4)
+	case PolygonTexturedQuadVertexColor:
+		poly.UV = readUVs(data, body+14, 4)
+		poly.Colors = readColors(data, body+24, 4)
+	case PolygonSpriteTopAnchor, PolygonSpriteBottomAnchor:
+		poly.SpriteIndex = binary.BigEndian.Uint16(data[body : body+2])
+		poly.SpriteWidth = binary.BigEndian.Uint16(data[body+2 : body+4])
+		poly.SpriteHeight = binary.BigEndian.Uint16(data[body+4 : body+6])
+		tex := binary.BigEndian.Uint16(data[body+6 : body+8])
+		poly.Texture = texture(tex)
+		color := readColor(data, body+8)
+		poly.Color = &color
+	}
+	return poly, size, nil
+}
+
+var prmPolygonSizes = map[uint16]int{
+	1: 16, 2: 28, 3: 16, 4: 32, 5: 24, 6: 36, 7: 28, 8: 44,
+	10: 16, 11: 16, 12: 16, 13: 28, 14: 20, 15: 32,
+	16: 28, 17: 40, 18: 36, 19: 52, 20: 56, 21: 16,
+	22: 28, 23: 40,
 }
