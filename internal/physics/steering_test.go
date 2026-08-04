@@ -186,7 +186,7 @@ func TestUpdatePitchInputUnchangedWhenNeitherHeld(t *testing.T) {
 
 func TestIntegratePitchAndRollDecaysPitchRate(t *testing.T) {
 	s := &Ship{PitchRate: 100}
-	IntegratePitchAndRoll(s)
+	DampAirbornePitchRate(s)
 	// (100-60) - (100-60)/4 = 40 - 10 = 30
 	if s.PitchRate != 30 {
 		t.Errorf("PitchRate = %v, want 30", s.PitchRate)
@@ -196,9 +196,8 @@ func TestIntegratePitchAndRollDecaysPitchRate(t *testing.T) {
 func TestIntegratePitchAndRollFeedsPitch(t *testing.T) {
 	s := &Ship{PitchRate: 100, Pitch: 0}
 	IntegratePitchAndRoll(s)
-	// Pitch += PitchRate/16 using the *decayed* PitchRate (30): 30/16 = 1 (int32 truncation)
-	if s.Pitch != 1 {
-		t.Errorf("Pitch = %v, want 1", s.Pitch)
+	if s.Pitch != 6 {
+		t.Errorf("Pitch = %v, want 6", s.Pitch)
 	}
 }
 

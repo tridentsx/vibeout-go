@@ -9,7 +9,8 @@ main
  ├─ render ── game, assets, SDL
  ├─ controller ── SDL input
  ├─ audio/sfx
- └─ audio/music
+ ├─ audio/music
+ └─ video ── psx (decoded cutscenes), FFmpeg for offline export only
 ```
 
 - `internal/psx` is the binary compatibility layer. It parses individual
@@ -26,6 +27,9 @@ main
 - `internal/audio/sfx` owns short semantic event sounds and their player
   contract. `internal/audio/music` independently owns soundtrack discovery,
   streaming/playback control, and movie-audio tracks.
+- `internal/video` owns lossless offline cutscene export and the future runtime
+  playback boundary. Runtime playback must not depend on FFmpeg; only the
+  exporter command may invoke it.
 - `main` is the composition root: it creates concrete loaders/backends and
   connects the subsystems. It should contain orchestration, not subsystem
   implementation.

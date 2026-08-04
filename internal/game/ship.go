@@ -77,6 +77,9 @@ type Ship struct {
 	// [ship+4], a pointer to the ship's current TrackSection node) --
 	// [ship+0x98] directly is a completely different field, see Speed below.
 	SectionID int16
+	// PreviousSectionID ([ship+0xca]) receives the section index that was
+	// current before the per-frame nearest-section graph search.
+	PreviousSectionID int16
 
 	// Speed and MaxSpeed ([ship+0x98]/[+0x9a]) -- current speed, ramped
 	// toward a throttle-derived target at a fixed rate (see UpdateThrottle),
@@ -93,6 +96,13 @@ type Ship struct {
 	// traced) -- IntegrateShipPhysics derives it from Yaw via cos/sin as an
 	// explicit, flagged engineering assumption, not a ported fact.
 	Forward Vector3
+
+	// Right ([ship+0x20]/[+0x24]/[+0x28]) -- the second Q12 orientation
+	// vector written beside Forward by UpdateShipOrientationVectorsAndTrackSide
+	// (0x8003214c-0x80032218). At zero rotation it is (1,0,0). Wall collision
+	// uses Right/16 together with Forward/16 to construct the ship's corner
+	// probes. The runtime port stores the corresponding unit float vector.
+	Right Vector3
 
 	// AirBrakeLeft, AirBrakeRight ([ship+0x90]/[+0x92]) -- per-side air-brake
 	// ramp values, confirmed session 9 (sub_800662fc): +38/frame while held,
@@ -121,6 +131,11 @@ type Ship struct {
 	// identified").
 	InertiaFactor, DragCoefficient float32
 
+	// GroundedSpring ([ship+0xa6]) is a per-class stat used only by the
+	// grounded branch's post-contact velocity redirect. The live denominator
+	// is GroundedSpring + (AirBrakeLeft+AirBrakeRight)/4.
+	GroundedSpring float32
+
 	// SpeedMagnitude ([ship+0x94]) -- half of the current velocity vector's
 	// magnitude, recomputed each IntegrateShipPhysics call (session 8-9).
 	// Feeds the air-brake differential yaw term. The original gates this
@@ -142,9 +157,10 @@ type Ship struct {
 	// "BankRate" -- session 10 confirmed via real-world game knowledge
 	// that WipEout 2097 has no dedicated bank button at all; this is a
 	// separate nose-pitch control) -- a ramped accumulator feeding Pitch
-	// each frame (confirmed session 10, maybe_IntegrateShipPhysics's tail:
-	// `pitch += round(signed16(pitchRate)/16)` after a compound decay,
-	// `pitchRate = (pitchRate-60) - (pitchRate-60)/4`). Ramped +/-0x24 per
+	// each frame. Raw control-flow verification at 0x80031374 and
+	// 0x80031964 shows that grounded contact applies quarter damping, while
+	// only the airborne branch applies the `(pitchRate-60)*3/4` bias; the
+	// branches rejoin before `pitch += pitchRate/16` at 0x80031a1c. Ramped +/-0x24 per
 	// frame by maybe_RunShipAutopilot based on padInputState[2] bits
 	// 0x40/0x10, matching D-pad Down/Up (Up dips the nose down, Down
 	// pulls it up, per the user's real-world knowledge session 10) --
@@ -188,6 +204,10 @@ type Ship struct {
 	// RankCounter ([ship+0xc6]/[+0xc7]) -- signed relative-position counters
 	// between ship pairs, maintained by maybe_UpdateShipRaceRankAndAI.
 	RankCounter [2]int8
+
+	// RecoveryTimer ([ship+0xe0]) is set to 500 when the far-from-track
+	// centerline test enters the original recovery callback state.
+	RecoveryTimer int32
 }
 
 // ShipFlag bits with a well-established meaning, confirmed across multiple
@@ -196,9 +216,29 @@ type Ship struct {
 // haven't been individually pinned down yet -- Flags preserves them all,
 // this is deliberately not an exhaustive enum.
 const (
+	// ShipFlagCockpitCamera ([ship+0xc] bit 0x4) records the active camera
+	// callback. ToggleShipCameraView (SLES_003.27 0x800663cc) sets it while
+	// installing UpdateCockpitCameraView (0x800208fc), and clears it while
+	// installing UpdateChaseCameraFollow (0x80020608).
+	ShipFlagCockpitCamera uint32 = 0x4
+
+	// ShipFlagFarFromTrackSection ([ship+0xc] bit 0x10) is set when the
+	// weighted distance to the nearest searched TrackSection is at least
+	// 3701, and cleared below that threshold.
+	ShipFlagFarFromTrackSection uint32 = 0x10
+
+	// ShipFlagTrackFaceSide ([ship+0xc] bit 0x20) is recomputed every frame
+	// by UpdateShipOrientationVectorsAndTrackSide (0x800320d8). The physics
+	// integrator uses it to choose between a section's paired driving faces.
+	ShipFlagTrackFaceSide uint32 = 0x20
+
 	// ShipFlagRetired marks a ship that has retired/reset -- set alongside
 	// the effect-callback-chain reset pattern seen in
 	// maybe_CheckShipRetireStatus, maybe_UpdateShipRaceRankAndAI, and
 	// maybe_IntegrateShipPhysicsFromPadInput's out-of-bounds recovery path.
 	ShipFlagRetired uint32 = 0x40
+
+	// ShipFlagRecoveryState is the exact combined mask ORed into ship+0xc by
+	// the 32001-unit far-from-track recovery path.
+	ShipFlagRecoveryState uint32 = 0x401
 )

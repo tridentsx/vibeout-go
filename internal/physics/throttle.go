@@ -1,9 +1,12 @@
 package physics
 
-// UpdateThrottle ramps a ship's Speed toward a throttle-derived target,
-// porting maybe_IntegrateShipPhysicsFromPadInput's opening block
-// (SLES_003.27 0x80066cac-0x80066da8, bn-psx/docs/wipeout2097_ship_physics_hunt.md
-// session 8). Confirmed via raw disassembly, not just decompiled pseudo-C --
+// UpdateThrottle ramps a ship's Speed toward a throttle-derived target.
+// The ramp and upper clamp were first recovered from the unused pad-input
+// integrator (SLES_003.27 0x80066cac-0x80066da8). The active
+// RunShipControlAndPhysics path at 0x80024fc8 additionally clamps deceleration
+// to zero when Speed is below the 19-unit step; omitting that live-path check
+// made an idle ship accelerate backward without bound. Confirmed from raw
+// MIPS disassembly, not just decompiled pseudo-C --
 // the decompiler's pretty-printer flattened two different bit tests of
 // padInputState[2] (0x2 and 0x4000) into a single misleadingly-repeated
 // "if (v0==0) if (v0==0)", which reads as dead code but isn't.
@@ -45,5 +48,8 @@ func UpdateThrottle(s *Ship, analogAvailable bool, analogThrottle float32, digit
 
 	if s.Speed > s.MaxSpeed {
 		s.Speed = s.MaxSpeed
+	}
+	if s.Speed < 0 {
+		s.Speed = 0
 	}
 }

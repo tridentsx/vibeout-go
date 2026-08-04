@@ -120,6 +120,28 @@ func TestIntegrateShipPhysicsForwardIsUnitVectorWithPitch(t *testing.T) {
 	}
 }
 
+func TestIntegrateShipPhysicsRightMatchesConfirmedOrientationRow(t *testing.T) {
+	s := &Ship{InertiaFactor: 64, DragCoefficient: 128}
+	IntegrateShipPhysics(s)
+	if !almostEqual(s.Right.X, 1) || !almostEqual(s.Right.Y, 0) || !almostEqual(s.Right.Z, 0) {
+		t.Errorf("Right at zero rotation = %+v, want (1,0,0)", s.Right)
+	}
+
+	s = &Ship{InertiaFactor: 64, DragCoefficient: 128, Yaw: Angle(500), Pitch: Angle(300), Roll: Angle(700)}
+	IntegrateShipPhysics(s)
+	sinYaw, cosYaw := s.Yaw.Sin(), s.Yaw.Cos()
+	sinPitch, cosPitch := s.Pitch.Sin(), s.Pitch.Cos()
+	sinRoll, cosRoll := s.Roll.Sin(), s.Roll.Cos()
+	want := Vector3{
+		X: cosYaw*cosRoll + sinYaw*sinRoll*sinPitch,
+		Y: -sinRoll * cosPitch,
+		Z: sinYaw*cosRoll - cosYaw*sinPitch*sinRoll,
+	}
+	if !almostEqual(s.Right.X, want.X) || !almostEqual(s.Right.Y, want.Y) || !almostEqual(s.Right.Z, want.Z) {
+		t.Errorf("Right = %+v, want %+v", s.Right, want)
+	}
+}
+
 func TestIntegrateShipPhysicsThrustAcceleratesAlongForward(t *testing.T) {
 	s := &Ship{Speed: 100, InertiaFactor: 64, DragCoefficient: 128}
 	IntegrateShipPhysics(s)

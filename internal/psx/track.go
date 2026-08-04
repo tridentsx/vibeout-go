@@ -112,7 +112,11 @@ type TrackSection struct {
 	ViewCounts [3][5]uint16
 	FirstFace  uint32
 	NumFaces   uint16
-	Flags      uint16
+	// CollisionFlags is the full word at runtime TrackSection+0x94. Wall
+	// collision dispatch tests bits 0x180000; the low half is also exposed
+	// as Flags for the older section-type constants below.
+	CollisionFlags uint32
+	Flags          uint16
 }
 
 const trackSectionSize = 156
@@ -135,7 +139,8 @@ func DecodeTRS(data []byte) ([]TrackSection, error) {
 			FirstFace:    binary.BigEndian.Uint32(data[off+140 : off+144]),
 			NumFaces:     binary.BigEndian.Uint16(data[off+144 : off+146]),
 			// off+146:off+150 (4 bytes) skipped.
-			Flags: binary.BigEndian.Uint16(data[off+150 : off+152]),
+			CollisionFlags: binary.BigEndian.Uint32(data[off+148 : off+152]),
+			Flags:          binary.BigEndian.Uint16(data[off+150 : off+152]),
 			// off+152:off+156 (4 bytes) skipped.
 		}
 		for lane := range sections[i].ViewCounts {

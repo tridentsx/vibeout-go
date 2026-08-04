@@ -18,7 +18,8 @@ func (l Loader) LoadSFX(wadName, sampleName string, loop bool) (sfx.Clip, error)
 }
 
 // LoadMovieAudio exposes an AV soundtrack through the music-domain type.
-// XA sectors in retail movies are stereo at 37,800 Hz.
+// XA sectors in retail movies are stereo at 18,900 Hz. Their stripped-sector
+// cadence is three audio sectors per four video frames.
 func (l Loader) LoadMovieAudio(name string) (music.Track, error) {
 	av, err := l.LoadAV(name)
 	if err != nil {
@@ -28,5 +29,5 @@ func (l Loader) LoadMovieAudio(name string) (music.Track, error) {
 	if err != nil {
 		return music.Track{}, err
 	}
-	return music.Track{Name: name, Samples: pcm, SampleRate: 37800, Channels: 2}, nil
+	return music.Track{Name: name, Samples: pcm, SampleRate: 18900, Channels: 2}, nil
 }

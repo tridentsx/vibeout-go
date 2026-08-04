@@ -41,3 +41,11 @@ func TestUpdateThrottleDigitalDecelerate(t *testing.T) {
 		t.Errorf("expected digital decelerate to ramp down by 19, got %v", s.Speed)
 	}
 }
+
+func TestUpdateThrottleStopsAtZero(t *testing.T) {
+	s := &Ship{MaxSpeed: 100, Speed: 0}
+	UpdateThrottle(s, false, 0, false)
+	if s.Speed != 0 {
+		t.Errorf("expected live control path's zero floor, got %v", s.Speed)
+	}
+}

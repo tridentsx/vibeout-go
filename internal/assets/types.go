@@ -8,6 +8,15 @@ type TrackVertex = psx.TrackVertex
 type TrackFace = psx.TrackFace
 type TrackSection = psx.TrackSection
 type Image = psx.Image
+type Object = psx.Object
+type Polygon = psx.Polygon
+type Color = psx.Color
+type ObjectHeader = psx.ObjectHeader
 
 const TrackFaceTrack = psx.TrackFaceTrack
 const TrackFaceBoost = psx.TrackFaceBoost
+
+const TrackSectionJunctionEnd = psx.TrackSectionJunctionEnd
+const TrackSectionJunctionStart = psx.TrackSectionJunctionStart
+const TrackSectionJunction = psx.TrackSectionJunction
+const TrackSectionJump = psx.TrackSectionJump

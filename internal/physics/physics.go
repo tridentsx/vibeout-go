@@ -1,7 +1,5 @@
 package physics
 
-import "math"
-
 // UpdatePhysics advances a ship's velocity and position by one frame,
 // porting the confirmed core of maybe_IntegrateShipPhysicsFromPadInput
 // (SLES_003.27 0x80066c7c, bn-psx/docs/wipeout2097_ship_physics_hunt.md
@@ -146,8 +144,10 @@ func UpdateAirBrakes(s *Ship, leftHeld, rightHeld bool) {
 //     unit vector for arbitrary Yaw/Pitch (verified numerically), reducing to
 //     (0,0,1) at zero angles, matching camera.go's own "Yaw=0 faces +Z"
 //     convention. Roll does not enter this vector -- it only appears in a
-//     second matrix row the original writes (`ship+0x20/+0x24/+0x28`,
-//     likely an Up or Right vector) that has no consumer in this port yet.
+//   - The second vector written at `ship+0x20/+0x24/+0x28` is now confirmed
+//     as local Right: it is `(1,0,0)` at zero rotation and supplies the
+//     lateral offsets for ResolveShipWallSensorCollisions. Its exact
+//     yaw/pitch/roll formula is written into Ship.Right below.
 //
 // # Engineering assumptions (not ported facts, still flagged)
 //
@@ -155,40 +155,24 @@ func UpdateAirBrakes(s *Ship, leftHeld, rightHeld bool) {
 //     this always recomputes it -- the common case per the original's own
 //     logic.
 func IntegrateShipPhysics(s *Ship) {
-	const frameRateScale = 60.0 / 50.0 // PAL(50Hz)->NTSC(60Hz) normalization, confirmed elsewhere in this function
-	const gravityBiasY = 79488         // 0x13880, added to Y-axis thrust only, before the InertiaFactor division
+	UpdateShipOrientationVectors(s)
+	thrust, redirectTarget := prepareAirborneForces(s)
+	integrateAirborneShipPhysics(s, thrust, redirectTarget)
+}
 
-	sinYaw, cosYaw := s.Yaw.Sin(), s.Yaw.Cos()
-	sinPitch, cosPitch := s.Pitch.Sin(), s.Pitch.Cos()
-	s.Forward.X = -sinYaw * cosPitch
-	s.Forward.Y = -sinPitch
-	s.Forward.Z = cosYaw * cosPitch
-
-	boostMul := float32(1)
-	if s.BoostState != 0 {
-		if s.BoostState < 3 {
-			boostMul = 3
-		} else {
-			boostMul = 6
-		}
-	}
-
-	thrust := Vector3{
-		X: s.Speed * s.Forward.X * boostMul * 64,
-		Y: s.Speed * s.Forward.Y * boostMul * 64,
-		Z: s.Speed * s.Forward.Z * boostMul * 64,
-	}
-
-	velocityMagnitude := float32(math.Sqrt(float64(
-		s.Velocity.X*s.Velocity.X + s.Velocity.Y*s.Velocity.Y + s.Velocity.Z*s.Velocity.Z,
-	)))
+func prepareAirborneForces(s *Ship) (Vector3, Vector3) {
+	thrust := shipThrust(s)
+	velocityMagnitude := vectorMagnitude(s.Velocity)
 	s.SpeedMagnitude = velocityMagnitude / 2
-
-	redirectTarget := Vector3{
+	return thrust, Vector3{
 		X: velocityMagnitude * s.Forward.X,
 		Y: velocityMagnitude * s.Forward.Y,
 		Z: velocityMagnitude * s.Forward.Z,
 	}
+}
+
+func integrateAirborneShipPhysics(s *Ship, thrust, redirectTarget Vector3) {
+	const gravityBiasY = 79488 // 0x13880, added to Y-axis thrust only, before the InertiaFactor division
 
 	brakeSum := s.AirBrakeLeft + s.AirBrakeRight
 	springDenom := 4*brakeSum + 20 // 0x14
@@ -199,19 +183,22 @@ func IntegrateShipPhysics(s *Ship) {
 		Z: (redirectTarget.Z-s.Velocity.Z)/springDenom + thrust.Z/s.InertiaFactor,
 	}
 
-	s.Velocity.X += accel.X * frameRateScale
-	s.Velocity.Y += accel.Y * frameRateScale
-	s.Velocity.Z += accel.Z * frameRateScale
+	applyShipAccelerationDragAndPosition(s, accel)
+}
 
-	dragDivisor := s.DragCoefficient * (74 - brakeSum/8) / 128 // 0x4a=74, >>3, >>7 in the original
-	s.Velocity.X -= s.Velocity.X / dragDivisor
-	s.Velocity.Y -= s.Velocity.Y / dragDivisor
-	s.Velocity.Z -= s.Velocity.Z / dragDivisor
-
-	s.Position.X += s.Velocity.X / 64
-	s.Position.Y += s.Velocity.Y / 64
-	s.Position.Z += s.Velocity.Z / 64
-
-	brakeDiff := s.AirBrakeLeft - s.AirBrakeRight
-	s.Yaw += Angle(int32(brakeDiff / 8 * s.SpeedMagnitude / 32768))
+// UpdateShipOrientationVectors ports the vector writes at
+// UpdateShipOrientationVectorsAndTrackSide 0x80032104-0x80032218. It is
+// separated from IntegrateShipPhysics because the original refreshes these
+// Q12 rows independently of thrust integration before collision consumes
+// them.
+func UpdateShipOrientationVectors(s *Ship) {
+	sinYaw, cosYaw := s.Yaw.Sin(), s.Yaw.Cos()
+	sinPitch, cosPitch := s.Pitch.Sin(), s.Pitch.Cos()
+	sinRoll, cosRoll := s.Roll.Sin(), s.Roll.Cos()
+	s.Forward = Vector3{X: -sinYaw * cosPitch, Y: -sinPitch, Z: cosYaw * cosPitch}
+	s.Right = Vector3{
+		X: cosYaw*cosRoll + sinYaw*sinRoll*sinPitch,
+		Y: -sinRoll * cosPitch,
+		Z: sinYaw*cosRoll - cosYaw*sinPitch*sinRoll,
+	}
 }

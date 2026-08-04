@@ -207,12 +207,9 @@ func UpdatePitchInput(s *Ship, dpadDownHeld, dpadUpHeld bool) {
 	}
 }
 
-// IntegratePitchAndRoll ports the confirmed pitch and steering-rate/roll
-// coupling from maybe_IntegrateShipPhysics's tail (SLES_003.27 0x80030784,
-// bn-psx/docs/wipeout2097_ship_physics_hunt.md session 10, common to both
-// of the function's branches):
+// IntegratePitchAndRoll ports the common angular-integration tail at
+// 0x800319f0-0x80031a58, reached after either contact branch:
 //
-//	pitchRate = (pitchRate - 60) - (pitchRate - 60) / 4   // compound decay
 //	pitch += round(pitchRate / 16)
 //
 //	rollRate += round(steeringRate / 32)               // steering banks the ship
@@ -232,7 +229,6 @@ func UpdatePitchInput(s *Ship, dpadDownHeld, dpadUpHeld bool) {
 // SteeringRate but write disjoint fields (Yaw vs Pitch/Roll), so ordering
 // between them doesn't matter.
 func IntegratePitchAndRoll(s *Ship) {
-	s.PitchRate = (s.PitchRate - 60) - (s.PitchRate-60)/4
 	s.Pitch = Angle(int32(s.Pitch) + int32(s.PitchRate/16))
 
 	s.RollRate += s.SteeringRate / 32
@@ -240,4 +236,11 @@ func IntegratePitchAndRoll(s *Ship) {
 
 	rollSum := int32(s.Roll) + int32(s.RollRate)
 	s.Roll = Angle(rollSum - rollSum/8)
+}
+
+// DampAirbornePitchRate ports 0x80031964-0x8003198c. The -60 bias and
+// quarter damping occur only on the airborne/no-driving-face path; grounded
+// pitch-rate damping is performed by UpdateTrackPitchAlignment instead.
+func DampAirbornePitchRate(s *Ship) {
+	s.PitchRate = (s.PitchRate - 60) - (s.PitchRate-60)/4
 }

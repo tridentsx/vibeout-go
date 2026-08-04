@@ -18,13 +18,14 @@ type Loader struct{ Root string }
 // runtime assets. Warnings records missing optional scenery, sections, or
 // textures; the driving surface itself is required.
 type Track struct {
-	Name     string
-	Scenery  []psx.Object
-	Vertices []psx.TrackVertex
-	Faces    []psx.TrackFace
-	Sections []psx.TrackSection
-	Tiles    []*psx.Image
-	Warnings []error
+	Name       string
+	Scenery    []psx.Object
+	Vertices   []psx.TrackVertex
+	Faces      []psx.TrackFace
+	Sections   []psx.TrackSection
+	Visibility []psx.TrackVisibility
+	Tiles      []*psx.Image
+	Warnings   []error
 }
 
 func (l Loader) read(parts ...string) ([]byte, error) {
@@ -60,6 +61,13 @@ func (l Loader) LoadTrack(name string) (*Track, error) {
 		track.Warnings = append(track.Warnings, readErr)
 	} else if track.Sections, err = psx.DecodeTRS(data); err != nil {
 		track.Warnings = append(track.Warnings, fmt.Errorf("assets: %s TRACK.TRS: %w", name, err))
+	}
+	if len(track.Sections) != 0 {
+		if data, readErr := l.read(name, "TRACK.VEW"); readErr != nil {
+			track.Warnings = append(track.Warnings, readErr)
+		} else if track.Visibility, err = psx.DecodeVEW(data, track.Sections); err != nil {
+			track.Warnings = append(track.Warnings, fmt.Errorf("assets: %s TRACK.VEW: %w", name, err))
+		}
 	}
 	if data, readErr := l.read(name, "SCENE.PRM"); readErr != nil {
 		track.Warnings = append(track.Warnings, readErr)
@@ -104,4 +112,17 @@ func (l Loader) LoadAV(name string) (*psx.AV, error) {
 		return nil, err
 	}
 	return psx.DecodeAV(data)
+}
+
+// LoadPRM loads a runtime object bundle relative to the disc root.
+func (l Loader) LoadPRM(parts ...string) ([]psx.Object, error) {
+	data, err := l.read(parts...)
+	if err != nil {
+		return nil, err
+	}
+	objects, err := psx.DecodePRM(data)
+	if err != nil {
+		return nil, fmt.Errorf("assets: decode %s: %w", filepath.Join(parts...), err)
+	}
+	return objects, nil
 }

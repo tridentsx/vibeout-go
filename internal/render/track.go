@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/Zyko0/go-sdl3/sdl"
 	"github.com/tridentsx/wipeout-go/internal/assets"
@@ -16,6 +17,177 @@ type TrackRenderer struct {
 	tileColors                                   [][3]uint8
 	scale, offsetX, offsetZ                      float32
 	sceneryScale, sceneryOffsetX, sceneryOffsetZ float32
+}
+
+const psxProjectionDistance = float32(1000) // InitGTEProjectionState, 0x8008008c.
+
+type perspectiveVertex struct {
+	position game.Vector3
+	uv       sdl.FPoint
+}
+
+type perspectiveTriangle struct {
+	vertices [3]sdl.Vertex
+	texture  *sdl.Texture
+	depth    float32
+}
+
+// DrawPerspective submits the track through the original camera coordinate
+// system. InitGTEProjectionState configures the retail executable's GTE with
+// H=1000 for a 320-pixel-wide display; scaling H with the output width keeps
+// that horizontal field of view when the presentation window is enlarged.
+// The PS1 has no depth buffer, so faces are submitted far-to-near.
+//
+// section selects which section's TRACK.VEW visibility lists gate which
+// faces are submitted -- the retail engine never submits the whole track in
+// one frame, only the current section plus what its precomputed lists say is
+// visible from it. Drawing every face unconditionally let far/behind-camera
+// geometry (including the opposite side of the lap) overlap the near view,
+// which is what produced the unrecognizable stretched/streaked background
+// seen before this was wired in.
+func (t *TrackRenderer) DrawPerspective(renderer *sdl.Renderer, camera Camera, section int, width, height float32) {
+	if t == nil {
+		return
+	}
+
+	// near is in world units (thousands-scale track geometry): a threshold of
+	// 1 lets faces with a near-zero camera-space Z through, and dividing by
+	// that near-zero Z during projection stretches them into screen-filling
+	// slivers. A few hundred units keeps that singularity out of range.
+	const near = float32(200)
+	focalX := psxProjectionDistance * width / 320
+	focalY := psxProjectionDistance * height / 240
+	faces := t.visibleFaces(section)
+	triangles := make([]perspectiveTriangle, 0, len(faces)*2)
+	uv := [4]sdl.FPoint{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}, {X: 0, Y: 1}}
+	for _, face := range faces {
+		n := 4
+		if face.Indices[2] == face.Indices[3] {
+			n = 3
+		}
+		polygon := make([]perspectiveVertex, 0, n+2)
+		valid := true
+		for i := 0; i < n; i++ {
+			index := int(face.Indices[i])
+			if index >= len(t.track.Vertices) {
+				valid = false
+				break
+			}
+			v := t.track.Vertices[index]
+			polygon = append(polygon, perspectiveVertex{
+				position: camera.WorldToCamera(game.Vector3{X: float32(v.X), Y: float32(v.Y), Z: float32(v.Z)}),
+				uv:       uv[i],
+			})
+		}
+		if !valid {
+			continue
+		}
+		polygon = clipPerspectiveNearPlane(polygon, near)
+		if len(polygon) < 3 {
+			continue
+		}
+
+		texture, color := t.facePresentation(face.Tile)
+		for i := 1; i+1 < len(polygon); i++ {
+			corners := [3]perspectiveVertex{polygon[0], polygon[i], polygon[i+1]}
+			triangle := perspectiveTriangle{texture: texture}
+			for j, corner := range corners {
+				triangle.vertices[j] = sdl.Vertex{
+					Position: sdl.FPoint{
+						X: width/2 + corner.position.X*focalX/corner.position.Z,
+						Y: height/2 + corner.position.Y*focalY/corner.position.Z,
+					},
+					Color: color, TexCoord: corner.uv,
+				}
+				triangle.depth += corner.position.Z / 3
+			}
+			if backFacing(triangle.vertices) {
+				continue
+			}
+			triangles = append(triangles, triangle)
+		}
+	}
+
+	sort.Slice(triangles, func(i, j int) bool { return triangles[i].depth > triangles[j].depth })
+	for _, triangle := range triangles {
+		renderer.RenderGeometry(triangle.texture, triangle.vertices[:], nil)
+	}
+}
+
+// visibleFaces gathers the faces belonging to section plus every section its
+// TRACK.VEW lists name, deduplicated. TrackVisibility.Lists entries are
+// section indices, not face indices (confirmed against real TRACK01 data:
+// max referenced index 320 matches len(sections)-1, not len(faces)-1).
+func (t *TrackRenderer) visibleFaces(section int) []assets.TrackFace {
+	if section < 0 || section >= len(t.track.Sections) {
+		return t.track.Faces
+	}
+	seen := make(map[int]bool, 32)
+	var faces []assets.TrackFace
+	include := func(idx int) {
+		if idx < 0 || idx >= len(t.track.Sections) || seen[idx] {
+			return
+		}
+		seen[idx] = true
+		s := t.track.Sections[idx]
+		first, end := int(s.FirstFace), int(s.FirstFace)+int(s.NumFaces)
+		if first < 0 || end > len(t.track.Faces) || first > end {
+			return
+		}
+		faces = append(faces, t.track.Faces[first:end]...)
+	}
+	include(section)
+	if section < len(t.track.Visibility) {
+		for _, lane := range t.track.Visibility[section].Lists {
+			for _, group := range lane {
+				for _, idx := range group {
+					include(int(idx))
+				}
+			}
+		}
+	}
+	return faces
+}
+
+func (t *TrackRenderer) facePresentation(tile uint8) (*sdl.Texture, sdl.FColor) {
+	color := sdl.FColor{R: 1, G: 90.0 / 255, B: 200.0 / 255, A: 1}
+	if int(tile) < len(t.tileTextures) && t.tileTextures[tile] != nil {
+		return t.tileTextures[tile], sdl.FColor{R: 1, G: 1, B: 1, A: 1}
+	}
+	if int(tile) < len(t.tileColors) {
+		average := t.tileColors[tile]
+		if average != ([3]uint8{}) {
+			color = sdl.FColor{R: float32(average[0]) / 255, G: float32(average[1]) / 255, B: float32(average[2]) / 255, A: 1}
+		}
+	}
+	return nil, color
+}
+
+func clipPerspectiveNearPlane(polygon []perspectiveVertex, near float32) []perspectiveVertex {
+	if len(polygon) == 0 {
+		return nil
+	}
+	result := make([]perspectiveVertex, 0, len(polygon)+2)
+	previous := polygon[len(polygon)-1]
+	previousInside := previous.position.Z >= near
+	for _, current := range polygon {
+		currentInside := current.position.Z >= near
+		if currentInside != previousInside {
+			ratio := (near - previous.position.Z) / (current.position.Z - previous.position.Z)
+			result = append(result, perspectiveVertex{
+				position: add(previous.position, mul(sub(current.position, previous.position), ratio)),
+				uv: sdl.FPoint{
+					X: previous.uv.X + (current.uv.X-previous.uv.X)*ratio,
+					Y: previous.uv.Y + (current.uv.Y-previous.uv.Y)*ratio,
+				},
+			})
+		}
+		if currentInside {
+			result = append(result, current)
+		}
+		previous, previousInside = current, currentInside
+	}
+	return result
 }
 
 func NewTrackRenderer(renderer *sdl.Renderer, track *assets.Track, width, height float32) (*TrackRenderer, error) {

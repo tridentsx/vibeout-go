@@ -4,6 +4,8 @@
 *.exe~
 *.dll
 *.so
+/.codex/
+/.mcp.json
 *.dylib
 
 # Go test and profiling output

@@ -1,5 +1,37 @@
 # wipeout-go — plan and TODO
 
+The executable's four difficulty-specific sixteen-slot ship-stat banks are
+now represented by `game.RaceShipSpec`. It supplies the exact inertia,
+maximum speed, drag, turn acceleration, and turn rate loaded during
+`InitializeRaceShipsAndStartingGrid`; turn values preserve the original
+integer `*60/50` normalization. The TRACK01 preview uses difficulty 0, slot 0
+and now drives the confirmed input/grounded-physics/orientation/camera chain
+from an SDL gamepad.
+
+The temporary TRACK01 section viewer verified that decoded track geometry,
+section connectivity, and perspective projection produce a recognizable track
+outline. It also exposed and fixed a camera-basis sign error: the old Down
+vector was not orthogonal to Forward. The executable now advances to the next
+integration milestone: authentic starting-grid placement, the binary-backed
+25 Hz input/physics chain under PAL's 50 Hz field presentation, the persistent
+race camera, and a decoded VECTO.PRM
+player craft. The section camera remains a diagnostic helper; its exact visual
+centering is not gameplay authority and is intentionally no longer blocking.
+
+`StepShipTrackPhysics` now performs the executable's flag-0x10 dispatch after
+the nearest-section search. Ordinary sections preserve that state; jump
+sections may set it by projecting the ship onto the paired driving-face plane
+and testing polygon containment. It is not selected by a guessed
+center-distance threshold. Near-track ships use the grounded surface-contact
+path. Far-from-track ships use the spring/gravity path and conditionally call
+the wall resolver while `Velocity.Y < currentSection.Y`. Thrust, speed magnitude, and the forward
+redirect target are captured before that wall call, preserving the original
+mutation order. The asymmetric current-to-next centerline
+projection test and its 32001-unit recovery transition are now ported: it
+zeros Speed, sets the ship timer to 500, and ORs flags 0x401. Installing and
+executing the original recovery callback plus its global 1000-frame state are
+still presentation/race-flow work.
+
 Reimplementing WipEout 2097 in Go, aiming for the exact same game feel and
 logic as the original, eventually in high resolution with custom
 replacement assets. This file tracks the architecture decisions made so
@@ -137,6 +169,15 @@ classified rather than being accepted by unrelated runtime decoders.
       video slots after several final frames. Sampled first/middle/final frames
       from every movie decode successfully, and independent FFmpeg comparison
       of a reference frame measured 51.1 dB PSNR (rounding-only differences).
+- [x] `cmd/export-video` / `internal/video` — lossless single-container cutscene
+      export for restoration tools: FFV1 video plus 18.9 kHz stereo PCM audio
+      in Matroska. The stripped XA cadence confirms 225/16 fps (three audio
+      sectors for every four frames), keeping exported audio/video durations
+      synchronized without resampling.
+- [ ] Video playback module — implement the `internal/video.Player` contract
+      with incremental MDEC decoding, SDL audio queuing, audio-clock sync,
+      cancellation/skip input, and optional preference for modern replacement
+      MKV files. Do not decode an entire cutscene to RGBA in memory at runtime.
 - [x] `prm.go` — retail `.PRM` 3D model parser, including object normals and
       all 22 valid primitive record sizes from `LoadPrm`/`IntelPrim`. It
       decodes all 48 runtime PRMs. Three retained development files
@@ -259,29 +300,179 @@ authority rule above:
       how to represent in Go (probably a small state machine, not a literal
       function-pointer port).
 
-### 🔴 OPEN ITEM: camera system is a placeholder, not reverse-engineered
+### ✅ Race camera and starting-grid placement
 
-`internal/render/camera.go`'s `NewChaseCamera` is a **standard, hand-picked
-third-person chase camera** (behind + above the ship, following its
-heading) — explicitly **not** derived from the real binary, unlike
-everything else in `internal/game/`. This breaks from the authority rule
-above and needs closing out.
+`internal/render/camera.go` now holds the persistent external/cockpit race
+camera port. The renderer also uses the executable's confirmed GTE projection
+distance (`H=1000` at `InitGTEProjectionState`, `0x8008008c`) rather than a
+guessed field of view.
 
-What's actually confirmed from bn-psx so far: `maybe_TransformAndSubmitPolygons`
-(SLES_003.27 `0x80012ed4`) loads a precomputed camera-relative transform
-matrix from `[drawObject+0x30]` straight into the GTE before `gte_rtps()`
-— the standard PS1 pattern of combining camera and object world transforms
-once per object per frame, not per-vertex. The draw-list table this reads
-from (`0x800f6f24`) was located, but tracing where each entry's `+0x30`
-matrix actually gets *written* (and from there, the real camera
-position/orientation formula relative to the ship) was not done — a
-genuinely open RE task, not just unstarted busywork.
+Confirmed camera entry points and behavior:
 
-**To close this item**: reverse-engineer that write site in bn-psx, update
-`bn-psx/docs/wipeout2097_ship_physics_hunt.md` with the findings, then
-replace `NewChaseCamera`'s body (not just its constants) with the real
-formula, updating the "PLACEHOLDER CAMERA" comment in `camera.go`
-accordingly.
+- `UpdateRaceStartCameraArc` (`0x800209f4`) walks backward through track
+  sections, eases from a grid-facing point toward the player, continuously
+  looks at the ship, and hands off at `ship+0xe0 == 0x64`. Race setup
+  initializes that per-ship timer to `0xa6`; countdown tones occur at 125, 83, and
+  0, so the camera handoff at 100 falls between the first two active tones.
+- `UpdateChaseCameraFollow` (`0x80020608`) starts at
+  `shipPosition - shipForwardQ12/4` with another `-200` on Y, projects that
+  anchor onto the local track-centerline segment, and applies the original
+  signed 16-bit spring, damping, and clearance-bias state. It follows ship
+  pitch/yaw but deliberately forces camera roll to zero.
+- `UpdateCockpitCameraView` (`0x800208fc`) places the camera at a rigid
+  128-unit offset along the ship's rotated local-up vector and inherits
+  ship pitch, yaw, and roll exactly.
+- The race-start callback body is the split sibling at `0x800209f8`
+  (Binary Ninja keeps the public callback entry at `0x800209f4`). It walks
+  eight linked track nodes backward, builds a timer-driven quadratic easing
+  term from `0xc8 - ship+0xe0`, interpolates the camera anchor from the
+  backward track point toward the ship, then projects that anchor onto the
+  nearby section and continuously aims at the ship. At `ship+0xe0 == 0x64`
+  it replaces the callback with chase or cockpit view according to the
+  two-player/view bit at `0x2a`, and updates ship flag `0x4` accordingly.
+  The callback is invoked indirectly through `data_8009563c` by the race
+  main loop; this explains why no direct xref to the camera routine exists.
+- `ToggleShipCameraView` (`0x800663cc`) is bound to pressed-button bit
+  `0x1000` and swaps the callback between the chase and cockpit routines;
+  ship flag `0x4` records the selected view.
+
+These identities and formulas come from aligned MIPS assembly and LLIL,
+including restoration of their legitimate overlapping/tail-shared entry
+points after Binary Ninja auto-analysis dropped them.
+
+The normal racing external/cockpit camera and Change View state are ported.
+The race-start sweep in `RaceCamera.updateRaceStart` is now live-verified
+(bn-psx session 25, 2026-08-05): single-stepping a real DuckStation session
+frame-by-frame through the intro sweep and comparing against the live camera
+node's translation matched this formula to within +/-1 world unit on 9 of 10
+sampled ticks across the full timer range -- bit-exact modulo PS1-vs-host
+truncation direction. `main.go` enables it unconditionally via
+`BeginRaceStart()`. Physics remains independent and the retail callback
+handoff (`ship+0xe0==0x64`) was also confirmed live: the intro breakpoint's
+hit count stops climbing at exactly 66 per sweep and the chase callback
+fires for the first time on the very next tick.
+
+`internal/game/grid.go` ports the position/orientation portion of
+`InitializeRaceShipsAndStartingGrid` (`0x80022bbc`): every grid slot advances
+two linked sections, alternates between the two grid faces, places the ship
+at the midpoint of face vertices 0 and 2 plus `normal*75/1024`, assigns the
+section, and sets yaw from the current-to-next section vector. The
+executable's TRACK01 configuration selects start section 0.
+
+### 🟡 OPEN ITEM: track contact and hover behavior
+
+- Per-frame section progression is now ported as `UpdateShipTrackSection`.
+  `UpdateShipTrackSectionNearest` (`0x80025674`) does not wait for a face
+  boundary: it searches a seven-section main-route window beginning three
+  `Previous` links behind the current node, plus six nodes on an encountered
+  junction route. Its squared-distance metric uses full X/Z error and Y/4,
+  retains the first candidate on ties, writes the old/new indices to
+  ship+0xca/+0xc8, and toggles ship flag 0x10 at distance 3701. The grounded
+  frame step now performs this search before track-side and face selection.
+
+- `ProjectPointOntoLineThroughPoints` (`0x80031e8c`) was previously
+  mislabeled as a ship surface routine. It is a shared geometric projection
+  used by the camera, weapon orbit, and physics.
+- `IntegrateShipPhysicsAndTrackContact` (`0x80030788`) measures a ship probe
+  against the selected driving face with `PlaneDistance`. Below 600 units it
+  adds `5 + (arg2-distance)` to `ship+0x78` (confirmed `PitchRate`); otherwise
+  it subtracts 50, then damps the result by one quarter. This is a contact/
+  pitch-alignment response, not enough evidence by itself to call it the
+  complete hover suspension.
+- The same routine projects against the current/next section centerline for
+  its 32001-unit out-of-bounds test and separately compares section-center Y
+  against ship Y with thresholds 705 and 80. These paths must be decoded as
+  a whole before wiring track contact into live movement.
+- The paired driving-face selector is now confirmed and ported in
+  `internal/physics/track_contact.go`. Per ship,
+  `UpdateShipOrientationVectorsAndTrackSide` computes
+  `dot(sectionCenter-shipPosition, face.vertex0-face.vertex1)`; a positive
+  result sets ship flag `0x20`. That flag selects the first driving face when
+  set and the immediately following face when clear.
+- The contact-force numerator is ported independently of the still-open
+  collision dispatch: per Q12 face-normal component it computes
+  `normal*16384/max(distance,75) - normal*64`; Y additionally receives
+  `+30000 + (currentSectionY-shipY)*64`. The section Y source is the current
+  section pointer at `ship+4`, not the linked next section. TRACK01's actual first grid face has
+  `NormalY=-4096`, and authentic grid slot 0 begins at PlaneDistance `-300`,
+  so the 75-unit floor is active at race start. Therefore `256` is only the
+  algebraic zero of the normal term on the opposite sign side, not evidence
+  for a 256-unit hover equilibrium.
+- A second PlaneDistance sample at `position + ForwardQ12/32` (128 units
+  ahead) feeds pitch alignment: below 600 it adds
+  `5 + centerDistance-forwardDistance` to `PitchRate`, otherwise subtracts
+  50, then damps PitchRate by one quarter.
+- `StepGroundedShipTrackPhysics` now composes the confirmed ordinary
+  `ship.Flags&0x10 == 0` ordering: orientation/track-side refresh, pre-contact
+  thrust and speed magnitude, wall response, clamped surface impulse,
+  surface-force plus thrust acceleration, shared drag/position integration,
+  then the forward-probe pitch response. It is covered against TRACK01's
+  authentic grid slot 0. The section-height correction is also ported:
+  at a gap of at least 705, inertia class 110 moves Y by 80; other classes
+  halve negative Y velocity and move Y by 16. The ship+0x9e pitch bypass is
+  retail-dormant: exhaustive aligned-store scanning found only its zeroing
+  initializer at `0x8002317c` and no nonzero writer.
+- `ApplyTrackSurfaceContactImpulse` (`0x800337c0`) is no longer confused
+  with wall collision. For distance `>=31` it does nothing; for
+  `0<distance<31` it adds `normalQ12*60/50`; for non-positive distance it
+  first damps velocity by `1/8`, then adds
+  `normalQ12*(60/50)*(1-distance/16)`. The physical core is ported and
+  tested; its particle/SFX call remains presentation work.
+- `ResolveShipWallSensorCollisions` (`0x80033c1c`) ignores the extra `a2`
+  value left by its physics caller; pad input does not select collision
+  behavior. It constructs a 512-unit forward probe plus paired side probes.
+  Only `PlaneDistance<=0` candidates dispatch a response. When
+  `section.CollisionFlags&0x180000 != 0`, `PointInsideFace` must succeed and
+  the graze response is used. Otherwise the first accepted sensor uses the
+  graze response and subsequent accepted sensors in that sweep use the full
+  response. This selection is ported. The two direction-dependent edge tests
+  are also exact: each tests the pair
+  `position +/- orientationRow2Q12/16 +/- ForwardQ12/16`, i.e. corners 256
+  units to either side of an edge 256 units ahead of or behind the ship.
+  `WallSensorEdge` ports that geometry without guessing which section-travel
+  branch semantically means front/rear. The face-range traversal is now also
+  ported as `SectionWallSweep`: the sign of
+  `dot(sectionCenter-shipPosition, drivingFace.vertex0-vertex1)` selects the
+  non-track prefix or suffix surrounding the section's contiguous run of
+  Track faces. A corpus check of every extracted matching TRS/TRF pair found
+  no section with a non-contiguous Track-face run. Resolving the junction-
+  neighbor fallback tree, then wiring the responses into live movement, is
+  the remaining wall-collision task. `SampleSectionWallSensors` now composes
+  that exact face run with the executable's 512-unit nose probe and paired
+  256-unit edge corners, returning all three signed plane distances without
+  prematurely applying a response. The prefix-side nose probe's complete
+  junction containment tree is now ported as
+  `SelectPrefixNoseResponseFace`. It covers current JunctionStart/End,
+  `previous.NextJunction`, `next.NextJunction`, and the executable's ordered
+  candidate/previous/next/junction first-face fallbacks. Neighbor tests reuse
+  the original candidate's plane distance, matching the call sites. The
+  mirrored suffix-side tree is now ported too. It correctly uses neighboring
+  sections' fixed `FirstFace+3` right-wall slots and retains its asymmetric
+  response-face substitutions. `SelectWallNoseContacts` composes both sides,
+  the face sweep, and nose PlaneDistance into accepted hard-response records.
+  The hard response's gameplay transition is now ported as
+  `HardWallCollisionResponse`: negative-distance velocity braking, the common
+  anisotropic normal impulse, position integration at velocity/64, and the
+  signed 16-bit steering kick of `SpeedMagnitude/4+400`. Final live response
+  The second orientation row is now confirmed as local Right and exposed on
+  the runtime ship. Its exact yaw/pitch/roll formula from
+  `UpdateShipOrientationVectorsAndTrackSide` is evaluated alongside Forward,
+  so the wall-corner probes no longer need provisional orientation input.
+  The end-of-sweep correction gate at `0x80094ae8` starts at zero and an
+  exhaustive aligned-instruction scan found no nonzero writer anywhere in
+  SLES_003.27; its only static writer clears it at `0x80042428`. The correction
+  is therefore dormant in this retail executable unless an external overlay
+  changes it. `ResolveShipWallSensorCollisions` now performs the authentic
+  sequential gameplay transition: fixed nose and immediate hard response,
+  recomputed negative-Right corner, then a newly recomputed positive-Right
+  corner. It preserves junction face substitution, special-section
+  containment, the routine-local collision flag, both steering-kick scales,
+  and the fact that ordinary grazes do not set that flag. The former
+  single-point helper is retained under the explicit
+  `ResolveShipWallCollisionApproximate` name and is not the gameplay path.
+  Remaining work is choosing the correct orchestration point alongside the
+  still-partial track-contact integrator, then validating against real track
+  sections in motion.
 
 ## Open decisions (not yet made, don't assume)
 
