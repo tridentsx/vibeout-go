@@ -159,15 +159,17 @@ func NowPlaying(selection int) string {
 	return fmt.Sprintf(NowPlayingFormat, index, MusicTracks[index].Title, MusicTracks[index].Artist)
 }
 
-// SpeedClass is GameContext.SpeedClass. Retail clamps a value of 3 or more back to
-// 0 unless the Phantom unlock flag is set.
+// SpeedClass is GameContext.SpeedClass (+0x08). The select screen labels the four
+// values NOVICE, INTERMEDIATE, EXPERT and SPEED DEMON. Whether the fourth is gated
+// is NOT established: the clamp previously believed to do that turned out to clamp
+// the track index instead.
 type SpeedClass uint8
 
 const (
 	SpeedClassVector SpeedClass = 0
 	SpeedClassVenom  SpeedClass = 1
 	SpeedClassRapier SpeedClass = 2
-	// SpeedClassPhantom is gated on GameContext.PhantomClassUnlocked.
+	// SpeedClassPhantom is "SPEED DEMON" on the select screen.
 	SpeedClassPhantom SpeedClass = 3
 )
 
@@ -197,29 +199,52 @@ type GameContext struct {
 	// "CHALLENGE I" / "CHALLENGE II" label.
 	Challenge1Flag bool
 	Challenge2Flag bool
-	// PhantomClassUnlocked is +0x62.
-	PhantomClassUnlocked bool
+	// AllTracksUnlocked is +0x62, set by the Eight Tracks cheat (hold L1+R1+Select,
+	// press Square, Circle, Triangle, Circle, Square) and equivalent to earning
+	// Challenge II. maybe_TrackSelectScreen draws "TRACK CHEAT ACTIVE" from it and
+	// raises the selectable track count to 8.
+	AllTracksUnlocked bool
+	// PhantomTrackCheat is +0x63, set by Triangle x3, Circle x3. The select screen
+	// labels it "PHANTOM TRACK CHEAT ACTIVE". What it actually grants is not yet
+	// established -- it sets the selectable count to 2 or 6, not 8.
+	PhantomTrackCheat bool
 }
 
-// menuTrackCount is the bound retail enforces on MenuTrackIndex in
-// maybe_InitChallengeModeSettings: `if (index >= 6) index = 0`. Note it is 6 there
-// even though MenuIndexToTrackID has 8 entries -- the last two are presumably
-// gated behind progress, so this is retail's *clamp*, not the table size.
+// menuTrackCount is the base number of selectable tracks. MenuIndexToTrackID has 8
+// entries; the last two -- both rated VERY HARD by the select screen -- open only
+// with Challenge II or the track cheat.
 const menuTrackCount = 6
 
-// Normalise applies the two clamps maybe_InitChallengeModeSettings performs, and
-// keeps TrackID consistent with MenuTrackIndex. Retail does this on entry to the
-// challenge setup rather than on every change.
+// Normalise applies the clamp maybe_InitChallengeModeSettings performs and keeps
+// TrackID consistent with MenuTrackIndex:
+//
+//	if (menuTrackIndex < 6)  ok;      // sltiu $v0, $v0, 6
+//	if (field_3e != 0)       ok;
+//	if (allTracksUnlocked)   ok;      // +0x62
+//	menuTrackIndex = 0; trackId = 1;
+//
+// Note this clamps the TRACK INDEX, not the speed class. An earlier reading of this
+// function had it clamping speedClass on a flag named phantomClassUnlocked; the
+// disassembly does not support that, and the external cheat list corroborates +0x62
+// as the all-eight-tracks unlock.
 func (c *GameContext) Normalise(menuIndexToTrackID []uint8) {
-	if int(c.MenuTrackIndex) >= menuTrackCount {
+	if int(c.MenuTrackIndex) >= menuTrackCount && !c.AllTracksUnlocked && !c.Challenge2Flag {
 		c.MenuTrackIndex = 0
-	}
-	if !c.PhantomClassUnlocked && c.SpeedClass >= SpeedClassPhantom {
-		c.SpeedClass = SpeedClassVector
+		c.TrackID = 1
 	}
 	if int(c.MenuTrackIndex) < len(menuIndexToTrackID) {
 		c.TrackID = menuIndexToTrackID[c.MenuTrackIndex]
 	}
+}
+
+// SelectableTrackCount is how many tracks the select screen offers.
+// maybe_TrackSelectScreen raises it to 8 when Challenge II is earned or the track
+// cheat is set, and otherwise offers the base six.
+func (c *GameContext) SelectableTrackCount() int {
+	if c.Challenge2Flag || c.AllTracksUnlocked {
+		return 8
+	}
+	return menuTrackCount
 }
 
 // AudioLevel converts a stored percentage to the 0..255 the driver takes, the way

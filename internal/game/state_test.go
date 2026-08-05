@@ -235,16 +235,27 @@ func TestGameContextNormalise(t *testing.T) {
 		t.Errorf("out-of-range index gave %d/%d, want 0/1", c.MenuTrackIndex, c.TrackID)
 	}
 
-	c = GameContext{SpeedClass: SpeedClassPhantom}
+	// The two VERY HARD tracks open with Challenge II or the track cheat.
+	c = GameContext{MenuTrackIndex: 7}
 	c.Normalise(table)
-	if c.SpeedClass != SpeedClassVector {
-		t.Errorf("locked Phantom stayed at %d, want clamping to Vector", c.SpeedClass)
+	if c.MenuTrackIndex != 0 {
+		t.Errorf("track 7 stayed selectable at %d without an unlock", c.MenuTrackIndex)
 	}
-
-	c = GameContext{SpeedClass: SpeedClassPhantom, PhantomClassUnlocked: true}
+	c = GameContext{MenuTrackIndex: 7, AllTracksUnlocked: true}
 	c.Normalise(table)
-	if c.SpeedClass != SpeedClassPhantom {
-		t.Error("unlocked Phantom must survive normalisation")
+	if c.MenuTrackIndex != 7 || c.TrackID != 7 {
+		t.Errorf("track cheat gave %d/%d, want 7/7", c.MenuTrackIndex, c.TrackID)
+	}
+	c = GameContext{MenuTrackIndex: 6, Challenge2Flag: true}
+	c.Normalise(table)
+	if c.MenuTrackIndex != 6 || c.TrackID != 6 {
+		t.Errorf("Challenge II gave %d/%d, want 6/6", c.MenuTrackIndex, c.TrackID)
+	}
+	if (&GameContext{}).SelectableTrackCount() != 6 {
+		t.Error("base selectable count should be 6")
+	}
+	if (&GameContext{AllTracksUnlocked: true}).SelectableTrackCount() != 8 {
+		t.Error("track cheat should offer 8")
 	}
 
 	c = GameContext{MenuTrackIndex: 4}
