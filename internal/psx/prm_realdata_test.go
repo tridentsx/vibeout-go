@@ -7,11 +7,13 @@ import (
 	"testing"
 )
 
-// wipeoutDiscPath is where this development machine's copy of the real
-// WipEout 2097 disc image lives. Tests in this file are skipped wherever
-// that path doesn't exist -- they validate the parser against real game
-// data, not synthetic fixtures, so they're inherently machine-specific.
-const wipeoutDiscPath = "/Users/tridentsx/Downloads/WipeOut.2097.PAL-PSX/WIPEOUT2-disc/WIPEOUT2"
+// wipeoutDiscPath is the extracted WipEout 2097 disc tree kept under the
+// repository's git-ignored assets/ directory. Package tests run with the
+// package directory as the working directory, so this is relative to
+// internal/psx/ -- two levels below the repo root. Tests that need real disc
+// data skip when it is absent; they validate the parsers against real game
+// data rather than synthetic fixtures.
+var wipeoutDiscPath = filepath.Join("..", "..", "assets", "WIPEOUT2")
 
 func beU16(data []byte, offset int) uint16 {
 	return uint16(data[offset])<<8 | uint16(data[offset+1])

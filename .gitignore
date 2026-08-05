@@ -25,6 +25,11 @@ go.work.sum
 /assets/
 /hdassets/
 
+# Exported models (derived from assets, regenerable via cmd/export-models)
+/export/
+/export-textures/
+/export-tracks/
+
 # OS metadata
 .DS_Store
 
