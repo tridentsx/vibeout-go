@@ -3,6 +3,7 @@ package physics
 import (
 	"fmt"
 	"math"
+	"os"
 
 	"github.com/tridentsx/wipeout-go/internal/assets"
 )
@@ -705,6 +706,14 @@ func ResolveShipWallSensorCollisions(ship *Ship, currentSection int, drivingFace
 	nose := Vector3{X: ship.Position.X + ship.Forward.X*512, Y: ship.Position.Y + ship.Forward.Y*512, Z: ship.Position.Z + ship.Forward.Z*512}
 	priorCollision := false
 
+	if os.Getenv("WALL_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "WALLDEBUG section=%d faces=%v prefixSide=%v directionDot=%.2f sideSign=%.2f shipPos=(%.1f,%.1f,%.1f) forward=(%.4f,%.4f,%.4f) nose=(%.1f,%.1f,%.1f)\n",
+			currentSection, faceIndices, prefixSide, directionDot, sideSign,
+			ship.Position.X, ship.Position.Y, ship.Position.Z,
+			ship.Forward.X, ship.Forward.Y, ship.Forward.Z,
+			nose.X, nose.Y, nose.Z)
+	}
+
 	for _, faceIndex := range faceIndices {
 		face := faces[faceIndex]
 		for _, vertexIndex := range face.Indices {
@@ -715,10 +724,21 @@ func ResolveShipWallSensorCollisions(ship *Ship, currentSection int, drivingFace
 		planePoint := faceVertex0(face, verts)
 		normal := FaceNormal(face)
 		noseDistance := PlaneDistance(nose, planePoint, normal)
+		if os.Getenv("WALL_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "WALLDEBUG   face=%d noseDistance=%.1f normal=(%.4f,%.4f,%.4f) planePoint=(%.1f,%.1f,%.1f)\n",
+				faceIndex, noseDistance, normal.X, normal.Y, normal.Z, planePoint.X, planePoint.Y, planePoint.Z)
+		}
 		if noseDistance <= 0 {
 			if responseFace, accepted := SelectNoseResponseFace(prefixSide, nose, noseDistance, currentSection, faceIndex, sections, faces, verts); accepted {
 				responseNormal := FaceNormal(faces[responseFace])
+				if os.Getenv("WALL_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "WALLDEBUG   NOSE HIT responseFace=%d normal=(%.4f,%.4f,%.4f) sideSign=%.2f steeringRateBefore=%.2f\n",
+						responseFace, responseNormal.X, responseNormal.Y, responseNormal.Z, sideSign, ship.SteeringRate)
+				}
 				ship.Position, ship.Velocity, ship.SteeringRate = HardWallCollisionResponse(ship.Position, ship.Velocity, responseNormal, ship.SteeringRate, ship.SpeedMagnitude, sideSign, noseDistance)
+				if os.Getenv("WALL_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "WALLDEBUG   NOSE HIT steeringRateAfter=%.2f\n", ship.SteeringRate)
+				}
 				priorCollision = true
 				responses++
 			}
@@ -733,7 +753,12 @@ func ResolveShipWallSensorCollisions(ship *Ship, currentSection int, drivingFace
 				projected := Vector3{X: point.X - normal.X*distance, Y: point.Y - normal.Y*distance, Z: point.Z - normal.Z*distance}
 				pointInside = PointInsideFace(projected, face, verts)
 			}
-			switch SelectWallResponse(distance, section.CollisionFlags, priorCollision, pointInside) {
+			response := SelectWallResponse(distance, section.CollisionFlags, priorCollision, pointInside)
+			if os.Getenv("WALL_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "WALLDEBUG   corner=%d point=(%.1f,%.1f,%.1f) distance=%.1f response=%v sideSign=%.2f steeringRateBefore=%.2f\n",
+					corner, point.X, point.Y, point.Z, distance, response, sideSign, ship.SteeringRate)
+			}
+			switch response {
 			case WallResponseGraze:
 				ship.Velocity = WallBounceImpulse(ship.Velocity, normal)
 				if section.CollisionFlags&trackSectionGrazeOnlyMask != 0 {
