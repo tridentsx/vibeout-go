@@ -74,7 +74,18 @@ func DrawShipPerspective(frame *Frame, camera Camera, ship *game.Ship, object *a
 		texture, color := objectPresentation(textures, polygon)
 		for i := 1; i+1 < len(vertices); i++ {
 			corners := [3]perspectiveVertex{vertices[0], vertices[i], vertices[i+1]}
-			submitScreenTriangle(frame, corners, focalX, focalY, width, height, texture, color, true)
+			// cull=false, matching DrawPerspective/drawObjectsPerspective: this
+			// pipeline's hardware depth test already hides a closed hull's true
+			// backfaces (see gpu.go's EnableDepthTest/EnableDepthWrite), so CPU
+			// culling is redundant there and actively wrong for single-sided
+			// flat panels like the wingtips -- a quad with no opposing backface
+			// polygon in the source data vanished depending on view angle
+			// whenever its one winding faced away from the camera. The `true`
+			// here predates the depth-tested GPU rewrite (4592e83), when
+			// culling stood in for the painter's-algorithm renderer's lack of
+			// any real occlusion test; track.go dropped it then, this call site
+			// was never revisited.
+			submitScreenTriangle(frame, corners, focalX, focalY, width, height, texture, color, false)
 		}
 	}
 }
