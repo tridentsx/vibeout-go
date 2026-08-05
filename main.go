@@ -17,7 +17,10 @@ import (
 	gameRender "github.com/tridentsx/wipeout-go/internal/render"
 )
 
-const wipeoutDiscPath = "/Users/tridentsx/Downloads/WipeOut.2097.PAL-PSX/WIPEOUT2-disc/WIPEOUT2"
+// wipeoutDiscPath is the extracted WipEout 2097 disc tree, kept under the
+// repository's git-ignored assets/ directory. Relative to the repo root, so
+// run the binary from there (e.g. `go run .`).
+const wipeoutDiscPath = "assets/WIPEOUT2"
 
 type keyboardState struct {
 	accelerate, left, right, leftBrake, rightBrake bool
