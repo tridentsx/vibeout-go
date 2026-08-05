@@ -144,3 +144,58 @@ the retail data path, and may not hold for object types not yet seen.
 - **Menu order is not the internal track ID.** TRACK01 is menu index 0 but internal
   ID 1, and the per-track tables are keyed by the internal ID. Indexing by menu
   order reads entry 0, which is usually zero.
+
+---
+
+# Update: findings from reading the executable
+
+Full detail in `bn-psx/docs/wipeout2097_race_start_props.md`. Summary of what
+changed above.
+
+**Items 2 and 3 share one blocker, now precisely located.** All three missing props
+are owned by `maybe_InitGlobalRaceResources` (`0x80041e9c`), a one-time init from
+`main` that opens `COMMON/STARTWAD.WAD` and binds `"sroid"` and `"light"` against a
+global scene root. They are then re-bound per race with the per-track prop entry.
+Loading `STARTWAD.WAD` unblocks the gantry, the gate and the rescue craft together.
+
+**Item 1, the maintenance craft — half answered.** The model is
+`COMMON/RESCU.PRM`, confirmed: one object, 51 polygons, whose name is `"grid2"`.
+It occupies slot `[0x1e]` of the prop pool, so its pointer is `0x800a5158`. Exactly
+one function reads it, `maybe_AnimateRescueCraftGlow` (`0x80048d08`), which animates
+its **lights only** — per-vertex RGB on gouraud primitives from three fixed sine
+phases. Nothing in it moves the craft, so the descent-and-departure path is still
+unlocated.
+
+**Item 3 gained a second purpose.** `sroid` is not only the visible start/finish
+marker: per tick it is passed to `maybe_DetectShipCheckpointCollision`
+(`0x80049508`), so the gate object *is* the lap-detection trigger. Drawing it and
+detecting laps come from the same data.
+
+**Item 2's formula is known but its input is not.** Each of the three lights is
+placed at a track section's centre raised `0xbb8`, yawed along
+`ratan2(section - section.Previous)`, with its node forced visible. Which three
+sections is still open: `maybe_StartLightPlacements` is in `.bss` and is read as
+`base + i*4`, so its writer leaves no direct reference.
+
+**Items 4 and 5 — the animator does no gating.** There is no visibility test in
+`maybe_AnimateSmokeTextureFrames` at all, so plumes appearing where retail hides
+them are gated by the node `+0x40` visible flag or by the binder, not the animator.
+Two concrete bugs in our version did surface:
+
+- **Only the first primitive of each smoke object is restamped per frame.** The
+  inner loop runs exactly once (`i = 0; do {...} while (i <= 0)`). We stamp every
+  panel.
+- **The frame advance is `if (tick % div == 0) frame += step`**, divisor and step
+  being arguments, not a fixed rate. Both sets use divisor 1; fast steps 2, and the
+  slow set's step is a register value rather than a constant.
+
+The atlas base is also a global rather than 0, the object counts come from the
+binder's out-params, and the RGB passed in is copied from a data address — smoke is
+tinted, not white.
+
+**The `0x40` face flag should be treated as unidentified.** Both of its consumers
+are vestigial: `maybe_FindSectionByDifficulty` locates the start-line section and
+then discards it in a self-branching delay loop, and `sub_8004c108`'s only side
+effect is storing zero to one byte. Neither result reaches rendering or physics, so
+`TrackFaceAlternateRoute` overstates what is known. The load-time dark red colour is
+real; the meaning is not.
