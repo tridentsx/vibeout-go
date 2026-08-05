@@ -142,6 +142,27 @@ func (c *RaceCamera) updateRaceStart(ship *game.Ship, sections []assets.TrackSec
 		// The original callback writes the intro pose first, then installs the
 		// normal callback for the following frame. Do not overwrite this
 		// frame's intro pose with the chase pose here.
+		//
+		// updateExternal computes its own anchor fresh from the ship's current
+		// state every call -- ship.Position - Forward*1024, Y-200 -- with no
+		// relation to where this intro swoop just left the camera (that anchor
+		// tracks the section's road-center line; the ship's actual grid-slot
+		// position sits off that centerline by design). Left alone, the very
+		// next frame snaps by however far those two unrelated formulas
+		// disagree: simulated from TRACK01's start grid, ~876 world units in a
+		// single 1/25s tick, which reads as a jump/spin right as the intro
+		// hands off. Priming SpringVelocity so next frame's
+		// (freshExternalAnchor + SpringVelocity) equals this frame's intro
+		// position removes the pop; the existing per-tick decay then eases it
+		// toward the real tracked position exactly as it already does for any
+		// other transient error.
+		forward := shipForward(ship)
+		externalAnchor := game.Vector3{
+			X: ship.Position.X - forward.X*1024,
+			Y: ship.Position.Y - forward.Y*1024 - 200,
+			Z: ship.Position.Z - forward.Z*1024,
+		}
+		c.SpringVelocity = sub(c.Camera.Position, externalAnchor)
 		c.RaceStartActive = false
 	}
 }
