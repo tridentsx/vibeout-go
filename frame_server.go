@@ -1,15 +1,9 @@
 package main
 
 import (
-	"bytes"
-	"fmt"
-	"image"
-	"image/png"
 	"net"
 	"net/http"
 	"time"
-
-	"github.com/Zyko0/go-sdl3/sdl"
 )
 
 type frameCaptureResult struct {
@@ -67,40 +61,4 @@ func (s *frameServer) handleFrame(w http.ResponseWriter, r *http.Request) {
 	case <-time.After(5 * time.Second):
 		http.Error(w, "frame capture timed out", http.StatusGatewayTimeout)
 	}
-}
-
-// captureFramePNG must run on SDL's render thread, after drawing and before
-// Present. It reads the renderer rather than the desktop, so window focus and
-// occlusion do not affect the result.
-func captureFramePNG(renderer *sdl.Renderer) ([]byte, error) {
-	surface, err := renderer.ReadPixels(nil)
-	if err != nil {
-		return nil, fmt.Errorf("read renderer pixels: %w", err)
-	}
-	defer surface.Destroy()
-
-	rgbaSurface := surface
-	if surface.Format != sdl.PIXELFORMAT_RGBA32 {
-		rgbaSurface, err = surface.Convert(sdl.PIXELFORMAT_RGBA32)
-		if err != nil {
-			return nil, fmt.Errorf("convert captured pixels to RGBA: %w", err)
-		}
-		defer rgbaSurface.Destroy()
-	}
-	if rgbaSurface.W <= 0 || rgbaSurface.H <= 0 || rgbaSurface.Pitch < rgbaSurface.W*4 {
-		return nil, fmt.Errorf("invalid captured surface %dx%d pitch %d", rgbaSurface.W, rgbaSurface.H, rgbaSurface.Pitch)
-	}
-
-	width, height := int(rgbaSurface.W), int(rgbaSurface.H)
-	frame := image.NewRGBA(image.Rect(0, 0, width, height))
-	pixels := rgbaSurface.Pixels()
-	pitch := int(rgbaSurface.Pitch)
-	for y := 0; y < height; y++ {
-		copy(frame.Pix[y*frame.Stride:y*frame.Stride+width*4], pixels[y*pitch:y*pitch+width*4])
-	}
-	var encoded bytes.Buffer
-	if err := png.Encode(&encoded, frame); err != nil {
-		return nil, fmt.Errorf("encode captured frame: %w", err)
-	}
-	return encoded.Bytes(), nil
 }

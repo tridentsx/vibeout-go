@@ -29,12 +29,16 @@ func main() {
 	if err := sdl.Init(sdl.INIT_VIDEO | sdl.INIT_GAMEPAD); err != nil {
 		log.Fatal(err)
 	}
-	window, renderer, err := sdl.CreateWindowAndRenderer("WipeOut", 1280, 720, 0)
+	window, err := sdl.CreateWindow("WipeOut", 1280, 720, 0)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer renderer.Destroy()
 	defer window.Destroy()
+	device, err := gameRender.NewDevice(window, 1280, 720)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer device.Destroy()
 	frameServer, err := startFrameServer("127.0.0.1:8097")
 	if err != nil {
 		log.Fatal(err)
@@ -50,17 +54,26 @@ func main() {
 	for _, warning := range track.Warnings {
 		log.Printf("optional track asset: %v", warning)
 	}
-	trackRenderer, err := gameRender.NewTrackRenderer(renderer, track, 1280, 720)
+	trackRenderer, err := gameRender.NewTrackRenderer(device, track, 1280, 720)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer trackRenderer.Destroy()
 
-	craftObjects, err := loader.LoadPRM("COMMON", "VECTO.PRM")
+	// TERRY.PRM holds the five real per-team craft hulls (confirmed against a
+	// real PRM viewer): quirex1/fiesar1/auricom2/ag1/piranha2, matching the
+	// five team names in the executable's own strings (QIREX/FEISAR/AURICOM/
+	// AG SYSTEMS/PIRANHA). VECTO.PRM's standalone "vect" and HARRY.PRM's
+	// bundled "vect"/"ven"/"rap"/"phant" are menu class-select icons, not
+	// this craft. This preview defaults to the FEISAR team ("fiesar1").
+	craftObjects, err := loader.LoadPRM("COMMON", "TERRY.PRM")
 	if err != nil || len(craftObjects) == 0 {
 		log.Fatalf("load player craft: objects=%d err=%v", len(craftObjects), err)
 	}
-	craft := &craftObjects[0]
+	craft := gameRender.FindObject(craftObjects, "fiesar1")
+	if craft == nil {
+		log.Fatal("load player craft: TERRY.PRM has no \"fiesar1\" object")
+	}
 
 	ship := &game.Ship{ControlSource: game.ControlLocalPlayer, Flags: 0x248}
 	spec, err := game.RaceShipSpec(0, 0)
@@ -213,19 +226,27 @@ func main() {
 			accumulator -= tick
 		}
 
-		renderer.SetDrawColor(10, 10, 20, 255)
-		renderer.Clear()
-		trackRenderer.DrawPerspective(renderer, camera.Camera, camera.Section, 1280, 720)
+		frame, err := device.BeginFrame()
+		if err != nil {
+			log.Printf("render: begin frame: %v", err)
+			return nil
+		}
+		trackRenderer.DrawSkyPerspective(frame, camera.Camera, 1280, 720)
+		trackRenderer.DrawPerspective(frame, camera.Camera, 1280, 720)
+		trackRenderer.DrawSceneryPerspective(frame, camera.Camera, 1280, 720)
 		if camera.View == gameRender.CameraExternal {
-			gameRender.DrawShipPerspective(renderer, camera.Camera, ship, craft, 1280, 720)
+			gameRender.DrawShipPerspective(frame, camera.Camera, ship, craft, 1280, 720)
+		}
+		if err := device.Present(frame); err != nil {
+			log.Printf("render: present: %v", err)
+			return nil
 		}
 		select {
 		case request := <-frameServer.requests:
-			captured, captureErr := captureFramePNG(renderer)
+			captured, captureErr := device.CapturePNG()
 			request.result <- frameCaptureResult{png: captured, err: captureErr}
 		default:
 		}
-		renderer.Present()
 		return nil
 	})
 }

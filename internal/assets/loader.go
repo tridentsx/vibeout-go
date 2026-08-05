@@ -18,14 +18,17 @@ type Loader struct{ Root string }
 // runtime assets. Warnings records missing optional scenery, sections, or
 // textures; the driving surface itself is required.
 type Track struct {
-	Name       string
-	Scenery    []psx.Object
-	Vertices   []psx.TrackVertex
-	Faces      []psx.TrackFace
-	Sections   []psx.TrackSection
-	Visibility []psx.TrackVisibility
-	Tiles      []*psx.Image
-	Warnings   []error
+	Name         string
+	Scenery      []psx.Object
+	Sky          []psx.Object
+	Vertices     []psx.TrackVertex
+	Faces        []psx.TrackFace
+	Sections     []psx.TrackSection
+	Visibility   []psx.TrackVisibility
+	Tiles        []*psx.Image
+	SceneryTiles []*psx.Image
+	SkyTiles     []*psx.Image
+	Warnings     []error
 }
 
 func (l Loader) read(parts ...string) ([]byte, error) {
@@ -74,19 +77,108 @@ func (l Loader) LoadTrack(name string) (*Track, error) {
 	} else if track.Scenery, err = psx.DecodePRM(data); err != nil {
 		track.Warnings = append(track.Warnings, fmt.Errorf("assets: %s SCENE.PRM: %w", name, err))
 	}
-	if data, readErr := l.read(name, "TRACK.CMP"); readErr != nil {
+	// The track floor's real texture source is LIBRARY.CMP (a bank of small
+	// 32x32 tiles) plus LIBRARY.TTF, which for each TrackFace.Tile value
+	// lists 16 tile indices (a 4x4 "near" grid) composing one 128x128
+	// material -- confirmed against wipeout.js's own createTrack/.TTF
+	// handling (Wipeout.TrackTextureIndex: near[16]/med[4]/far[1], and
+	// `textures: LIBRARY.CMP, textureIndex: LIBRARY.TTF` in loadTrack).
+	// TRACK.CMP is not part of this path at all -- it was a wrong-file bug,
+	// not an intentional lower-detail source; wipeout.js itself always uses
+	// the near tier regardless of distance, which a modern GPU can afford
+	// unconditionally too, so med/far are intentionally not composed here.
+	if libraryCMP, readErr := l.read(name, "LIBRARY.CMP"); readErr != nil {
 		track.Warnings = append(track.Warnings, readErr)
-	} else if members, decodeErr := psx.DecodeCMP(data); decodeErr != nil {
-		track.Warnings = append(track.Warnings, fmt.Errorf("assets: %s TRACK.CMP: %w", name, decodeErr))
+	} else if libraryTTF, readErr := l.read(name, "LIBRARY.TTF"); readErr != nil {
+		track.Warnings = append(track.Warnings, readErr)
+	} else if members, decodeErr := psx.DecodeCMP(libraryCMP); decodeErr != nil {
+		track.Warnings = append(track.Warnings, fmt.Errorf("assets: %s LIBRARY.CMP: %w", name, decodeErr))
+	} else if records, decodeErr := psx.DecodeTTF(libraryTTF); decodeErr != nil {
+		track.Warnings = append(track.Warnings, fmt.Errorf("assets: %s LIBRARY.TTF: %w", name, decodeErr))
 	} else {
-		track.Tiles = make([]*psx.Image, len(members))
+		tiles := make([]*psx.Image, len(members))
 		for i, member := range members {
 			if image, imageErr := psx.DecodeTIM(member); imageErr == nil {
-				track.Tiles[i] = image
+				tiles[i] = image
+			}
+		}
+		track.Tiles = make([]*psx.Image, len(records))
+		for i, record := range records {
+			track.Tiles[i] = composeNearTexture(tiles, record)
+		}
+	}
+	if data, readErr := l.read(name, "SCENE.CMP"); readErr != nil {
+		track.Warnings = append(track.Warnings, readErr)
+	} else if members, decodeErr := psx.DecodeCMP(data); decodeErr != nil {
+		track.Warnings = append(track.Warnings, fmt.Errorf("assets: %s SCENE.CMP: %w", name, decodeErr))
+	} else {
+		track.SceneryTiles = make([]*psx.Image, len(members))
+		for i, member := range members {
+			if image, imageErr := psx.DecodeTIM(member); imageErr == nil {
+				track.SceneryTiles[i] = image
+			}
+		}
+	}
+	// SKY.PRM/SKY.CMP are the horizon backdrop, loaded independently of
+	// SCENE.PRM/SCENE.CMP -- confirmed against wipeout.js's loadTrack, which
+	// loads them as their own createScene({scale:48}) pass. Not drawing this
+	// at all (as this project didn't until now) left a real gap between the
+	// nearby track/scenery geometry and the far horizon: confirmed with a
+	// magenta clear-color diagnostic that the gap showed the clear color
+	// through, i.e. no geometry was submitted there, not just dark shading.
+	if data, readErr := l.read(name, "SKY.PRM"); readErr != nil {
+		track.Warnings = append(track.Warnings, readErr)
+	} else if objects, decodeErr := psx.DecodePRM(data); decodeErr != nil {
+		track.Warnings = append(track.Warnings, fmt.Errorf("assets: %s SKY.PRM: %w", name, decodeErr))
+	} else {
+		track.Sky = objects
+	}
+	if data, readErr := l.read(name, "SKY.CMP"); readErr != nil {
+		track.Warnings = append(track.Warnings, readErr)
+	} else if members, decodeErr := psx.DecodeCMP(data); decodeErr != nil {
+		track.Warnings = append(track.Warnings, fmt.Errorf("assets: %s SKY.CMP: %w", name, decodeErr))
+	} else {
+		track.SkyTiles = make([]*psx.Image, len(members))
+		for i, member := range members {
+			if image, imageErr := psx.DecodeTIM(member); imageErr == nil {
+				track.SkyTiles[i] = image
 			}
 		}
 	}
 	return track, nil
+}
+
+// composeNearTexture builds one 128x128 material image from a TTF record's
+// 16 "near" tile indices (the record's first 16 values), arranged as a 4x4
+// grid of 32x32 tiles: near[y*4+x] at pixel (x*32, y*32). Matches
+// wipeout.js's createTrack composedImage loop exactly. Missing/out-of-range
+// source tiles leave their 32x32 cell transparent black rather than failing
+// the whole material, consistent with this codebase's partial-decode style.
+func composeNearTexture(tiles []*psx.Image, record psx.TTFRecord) *psx.Image {
+	const tileSize = 32
+	const gridSize = 4
+	const composedSize = tileSize * gridSize
+	composed := &psx.Image{Width: composedSize, Height: composedSize, Pixels: make([]byte, composedSize*composedSize*4)}
+	for y := 0; y < gridSize; y++ {
+		for x := 0; x < gridSize; x++ {
+			index := int(record.Values[y*gridSize+x])
+			if index < 0 || index >= len(tiles) || tiles[index] == nil {
+				continue
+			}
+			source := tiles[index]
+			for sy := 0; sy < source.Height && sy < tileSize; sy++ {
+				dstRow := (y*tileSize + sy) * composedSize * 4
+				srcRow := sy * source.Width * 4
+				dstOff := dstRow + x*tileSize*4
+				width := source.Width
+				if width > tileSize {
+					width = tileSize
+				}
+				copy(composed.Pixels[dstOff:dstOff+width*4], source.Pixels[srcRow:srcRow+width*4])
+			}
+		}
+	}
+	return composed
 }
 
 func (l Loader) LoadVAG(wadName, sampleName string) (*psx.VAG, error) {

@@ -2,7 +2,6 @@ package render
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/Zyko0/go-sdl3/sdl"
 	"github.com/tridentsx/wipeout-go/internal/assets"
@@ -13,8 +12,11 @@ import (
 // loaded track. It does not read files or advance simulation state.
 type TrackRenderer struct {
 	track                                        *assets.Track
-	tileTextures                                 []*sdl.Texture
+	device                                        *Device
+	tileTextures                                 []*sdl.GPUTexture
 	tileColors                                   [][3]uint8
+	sceneryTextures                               []*sdl.GPUTexture
+	skyTextures                                   []*sdl.GPUTexture
 	scale, offsetX, offsetZ                      float32
 	sceneryScale, sceneryOffsetX, sceneryOffsetZ float32
 }
@@ -26,26 +28,23 @@ type perspectiveVertex struct {
 	uv       sdl.FPoint
 }
 
-type perspectiveTriangle struct {
-	vertices [3]sdl.Vertex
-	texture  *sdl.Texture
-	depth    float32
-}
-
 // DrawPerspective submits the track through the original camera coordinate
 // system. InitGTEProjectionState configures the retail executable's GTE with
 // H=1000 for a 320-pixel-wide display; scaling H with the output width keeps
 // that horizontal field of view when the presentation window is enlarged.
-// The PS1 has no depth buffer, so faces are submitted far-to-near.
 //
-// section selects which section's TRACK.VEW visibility lists gate which
-// faces are submitted -- the retail engine never submits the whole track in
-// one frame, only the current section plus what its precomputed lists say is
-// visible from it. Drawing every face unconditionally let far/behind-camera
-// geometry (including the opposite side of the lap) overlap the near view,
-// which is what produced the unrecognizable stretched/streaked background
-// seen before this was wired in.
-func (t *TrackRenderer) DrawPerspective(renderer *sdl.Renderer, camera Camera, section int, width, height float32) {
+// Every face is submitted unconditionally, every frame -- confirmed against
+// both reference projects (wipeout.js and wipeout-rewrite): neither reads
+// TRACK.VEW at all, they just draw the whole track and let the renderer's
+// own clipping handle the rest. An earlier version of this function tried to
+// replicate the PS1's own TRACK.VEW-based partial-visibility scheme (needed
+// on 1994 hardware, not on a modern GPU rendering ~1400 quads per frame) and
+// it was never a perfect stand-in: it produced real, hard-to-fully-close
+// gaps wherever its neighbor-distance/VEW heuristic didn't happen to cover
+// the camera's actual view. Depth testing (see internal/render/gpu.go)
+// already makes draw order irrelevant, so there's no correctness reason to
+// cull at all here.
+func (t *TrackRenderer) DrawPerspective(frame *Frame, camera Camera, width, height float32) {
 	if t == nil {
 		return
 	}
@@ -57,10 +56,8 @@ func (t *TrackRenderer) DrawPerspective(renderer *sdl.Renderer, camera Camera, s
 	const near = float32(200)
 	focalX := psxProjectionDistance * width / 320
 	focalY := psxProjectionDistance * height / 240
-	faces := t.visibleFaces(section)
-	triangles := make([]perspectiveTriangle, 0, len(faces)*2)
 	uv := [4]sdl.FPoint{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}, {X: 0, Y: 1}}
-	for _, face := range faces {
+	for _, face := range t.track.Faces {
 		n := 4
 		if face.Indices[2] == face.Indices[3] {
 			n = 3
@@ -90,66 +87,12 @@ func (t *TrackRenderer) DrawPerspective(renderer *sdl.Renderer, camera Camera, s
 		texture, color := t.facePresentation(face.Tile)
 		for i := 1; i+1 < len(polygon); i++ {
 			corners := [3]perspectiveVertex{polygon[0], polygon[i], polygon[i+1]}
-			triangle := perspectiveTriangle{texture: texture}
-			for j, corner := range corners {
-				triangle.vertices[j] = sdl.Vertex{
-					Position: sdl.FPoint{
-						X: width/2 + corner.position.X*focalX/corner.position.Z,
-						Y: height/2 + corner.position.Y*focalY/corner.position.Z,
-					},
-					Color: color, TexCoord: corner.uv,
-				}
-				triangle.depth += corner.position.Z / 3
-			}
-			if backFacing(triangle.vertices) {
-				continue
-			}
-			triangles = append(triangles, triangle)
+			submitScreenTriangle(frame, corners, focalX, focalY, width, height, texture, color, false)
 		}
-	}
-
-	sort.Slice(triangles, func(i, j int) bool { return triangles[i].depth > triangles[j].depth })
-	for _, triangle := range triangles {
-		renderer.RenderGeometry(triangle.texture, triangle.vertices[:], nil)
 	}
 }
 
-// visibleFaces gathers the faces belonging to section plus every section its
-// TRACK.VEW lists name, deduplicated. TrackVisibility.Lists entries are
-// section indices, not face indices (confirmed against real TRACK01 data:
-// max referenced index 320 matches len(sections)-1, not len(faces)-1).
-func (t *TrackRenderer) visibleFaces(section int) []assets.TrackFace {
-	if section < 0 || section >= len(t.track.Sections) {
-		return t.track.Faces
-	}
-	seen := make(map[int]bool, 32)
-	var faces []assets.TrackFace
-	include := func(idx int) {
-		if idx < 0 || idx >= len(t.track.Sections) || seen[idx] {
-			return
-		}
-		seen[idx] = true
-		s := t.track.Sections[idx]
-		first, end := int(s.FirstFace), int(s.FirstFace)+int(s.NumFaces)
-		if first < 0 || end > len(t.track.Faces) || first > end {
-			return
-		}
-		faces = append(faces, t.track.Faces[first:end]...)
-	}
-	include(section)
-	if section < len(t.track.Visibility) {
-		for _, lane := range t.track.Visibility[section].Lists {
-			for _, group := range lane {
-				for _, idx := range group {
-					include(int(idx))
-				}
-			}
-		}
-	}
-	return faces
-}
-
-func (t *TrackRenderer) facePresentation(tile uint8) (*sdl.Texture, sdl.FColor) {
+func (t *TrackRenderer) facePresentation(tile uint8) (*sdl.GPUTexture, sdl.FColor) {
 	color := sdl.FColor{R: 1, G: 90.0 / 255, B: 200.0 / 255, A: 1}
 	if int(tile) < len(t.tileTextures) && t.tileTextures[tile] != nil {
 		return t.tileTextures[tile], sdl.FColor{R: 1, G: 1, B: 1, A: 1}
@@ -190,11 +133,11 @@ func clipPerspectiveNearPlane(polygon []perspectiveVertex, near float32) []persp
 	return result
 }
 
-func NewTrackRenderer(renderer *sdl.Renderer, track *assets.Track, width, height float32) (*TrackRenderer, error) {
+func NewTrackRenderer(device *Device, track *assets.Track, width, height float32) (*TrackRenderer, error) {
 	if track == nil || len(track.Vertices) == 0 {
 		return nil, fmt.Errorf("render: track has no vertices")
 	}
-	result := &TrackRenderer{track: track}
+	result := &TrackRenderer{track: track, device: device}
 	minX, maxX := track.Vertices[0].X, track.Vertices[0].X
 	minZ, maxZ := track.Vertices[0].Z, track.Vertices[0].Z
 	for _, v := range track.Vertices[1:] {
@@ -246,23 +189,40 @@ func NewTrackRenderer(renderer *sdl.Renderer, track *assets.Track, width, height
 		result.sceneryOffsetX = -float32(minX)
 		result.sceneryOffsetZ = -float32(minZ)
 	}
-	result.tileTextures = make([]*sdl.Texture, len(track.Tiles))
+	result.tileTextures = make([]*sdl.GPUTexture, len(track.Tiles))
 	result.tileColors = make([][3]uint8, len(track.Tiles))
 	for i, img := range track.Tiles {
 		if img == nil {
 			continue
 		}
 		result.tileColors[i] = averageColor(img)
-		tex, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGBA8888, sdl.TEXTUREACCESS_STATIC, img.Width, img.Height)
+		tex, err := device.NewTexture(int(img.Width), int(img.Height), img.Pixels)
 		if err != nil {
 			continue
 		}
-		if err = tex.Update(nil, img.Pixels, int32(img.Width*4)); err != nil {
-			tex.Destroy()
+		result.tileTextures[i] = tex
+	}
+	result.sceneryTextures = make([]*sdl.GPUTexture, len(track.SceneryTiles))
+	for i, img := range track.SceneryTiles {
+		if img == nil {
 			continue
 		}
-		_ = tex.SetBlendMode(sdl.BLENDMODE_BLEND)
-		result.tileTextures[i] = tex
+		tex, err := device.NewTexture(int(img.Width), int(img.Height), img.Pixels)
+		if err != nil {
+			continue
+		}
+		result.sceneryTextures[i] = tex
+	}
+	result.skyTextures = make([]*sdl.GPUTexture, len(track.SkyTiles))
+	for i, img := range track.SkyTiles {
+		if img == nil {
+			continue
+		}
+		tex, err := device.NewTexture(int(img.Width), int(img.Height), img.Pixels)
+		if err != nil {
+			continue
+		}
+		result.skyTextures[i] = tex
 	}
 	return result, nil
 }
@@ -289,52 +249,120 @@ func (t *TrackRenderer) Destroy() {
 		return
 	}
 	for _, texture := range t.tileTextures {
-		if texture != nil {
-			texture.Destroy()
+		if texture != nil && t.device != nil {
+			t.device.ReleaseTexture(texture)
 		}
 	}
+	for _, texture := range t.sceneryTextures {
+		if texture != nil && t.device != nil {
+			t.device.ReleaseTexture(texture)
+		}
+	}
+	for _, texture := range t.skyTextures {
+		if texture != nil && t.device != nil {
+			t.device.ReleaseTexture(texture)
+		}
+	}
+}
+
+// DrawSceneryPerspective submits SCENE.PRM's decorative track-side objects
+// (billboards, structures) through the same camera coordinate system as
+// DrawPerspective. Scenery objects carry no rotation in ObjectHeader --
+// their vertices are placed directly at Header.Position in world axes, the
+// same assumption the existing DrawScenery top-down helper already makes.
+// SCENE.CMP's textures (up to 128x128, real color) are the source of most of
+// the track's visual color; TRACK.CMP's own tiles are uniformly small 32x32
+// grayscale metal-floor material.
+// DrawSceneryPerspective submits SCENE.PRM's decorative track-side objects
+// (billboards, structures) at their authored scale (1x).
+func (t *TrackRenderer) DrawSceneryPerspective(frame *Frame, camera Camera, width, height float32) {
+	drawObjectsPerspective(frame, camera, t.track.Scenery, t.sceneryTextures, 1, width, height)
+}
+
+// DrawSkyPerspective submits SKY.PRM's horizon backdrop. Confirmed against
+// wipeout.js's loadTrack/createScene: sky objects are authored small and
+// placed via createScene(files, {scale: 48}), i.e. their local vertex
+// offsets (not their Header.Position, which Three.js keeps as a separate,
+// unscaled translation) are enlarged 48x to form a distant-looking dome.
+// Without this, there was a real gap between the near track/scenery geometry
+// and the horizon -- confirmed with a magenta clear-color diagnostic showing
+// the clear color through that gap, i.e. genuinely no geometry there.
+func (t *TrackRenderer) DrawSkyPerspective(frame *Frame, camera Camera, width, height float32) {
+	const skyScale = 48
+	drawObjectsPerspective(frame, camera, t.track.Sky, t.skyTextures, skyScale, width, height)
+}
+
+// drawObjectsPerspective submits a flat list of PRM objects (scenery or sky)
+// through the camera. objectScale enlarges each vertex's offset from its
+// object's Position before placing it in world space (see DrawSkyPerspective
+// for why sky needs this and scenery doesn't).
+func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object, textures []*sdl.GPUTexture, objectScale, width, height float32) {
+	if frame == nil {
+		return
+	}
+	const near = float32(200)
+	focalX := psxProjectionDistance * width / 320
+	focalY := psxProjectionDistance * height / 240
+	for _, obj := range objects {
+		for _, polygon := range obj.Polygons {
+			if len(polygon.Indices) < 3 {
+				continue
+			}
+			vertices := make([]perspectiveVertex, 0, len(polygon.Indices)+2)
+			valid := true
+			for i, index := range polygon.Indices {
+				if int(index) >= len(obj.Vertices) {
+					valid = false
+					break
+				}
+				v := obj.Vertices[index]
+				// Header.Origin equals Header.Position for both scenery and sky
+				// objects (confirmed by direct inspection), so subtracting it here --
+				// as DrawShipPerspective does for craft, where Origin and Position
+				// are independent -- would cancel Position out entirely and leave
+				// vertices at raw local-space coordinates near the world origin. The
+				// existing 2D DrawScenery helper already gets this right: only
+				// Position offsets the vertex.
+				world := game.Vector3{
+					X: float32(obj.Header.Position.X) + float32(v.X)*objectScale,
+					Y: float32(obj.Header.Position.Y) + float32(v.Y)*objectScale,
+					Z: float32(obj.Header.Position.Z) + float32(v.Z)*objectScale,
+				}
+				var uv sdl.FPoint
+				if i < len(polygon.UV) {
+					uv = sdl.FPoint{X: float32(polygon.UV[i].U) / 255, Y: float32(polygon.UV[i].V) / 255}
+				}
+				vertices = append(vertices, perspectiveVertex{position: camera.WorldToCamera(world), uv: uv})
+			}
+			if !valid {
+				continue
+			}
+			vertices = clipPerspectiveNearPlane(vertices, near)
+			if len(vertices) < 3 {
+				continue
+			}
+			texture, color := objectPresentation(textures, polygon)
+			for i := 1; i+1 < len(vertices); i++ {
+				corners := [3]perspectiveVertex{vertices[0], vertices[i], vertices[i+1]}
+				submitScreenTriangle(frame, corners, focalX, focalY, width, height, texture, color, false)
+			}
+		}
+	}
+}
+
+func objectPresentation(textures []*sdl.GPUTexture, polygon assets.Polygon) (*sdl.GPUTexture, sdl.FColor) {
+	if polygon.Texture != nil {
+		index := int(*polygon.Texture)
+		if index >= 0 && index < len(textures) && textures[index] != nil {
+			return textures[index], sdl.FColor{R: 1, G: 1, B: 1, A: 1}
+		}
+	}
+	return nil, polygonColor(polygon)
 }
 
 func (t *TrackRenderer) point(x, z int32) (float32, float32) {
 	const margin float32 = 40
 	return (float32(x)+t.offsetX)*t.scale + margin, (float32(z)+t.offsetZ)*t.scale + margin
-}
-
-func (t *TrackRenderer) Draw(renderer *sdl.Renderer) {
-	if t == nil {
-		return
-	}
-	uv := [4]sdl.FPoint{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}, {X: 0, Y: 1}}
-	for _, f := range t.track.Faces {
-		var texture *sdl.Texture
-		color := sdl.FColor{R: 1, G: 90.0 / 255, B: 200.0 / 255, A: 1}
-		if int(f.Tile) < len(t.tileTextures) {
-			texture = t.tileTextures[f.Tile]
-		}
-		if texture != nil {
-			color = sdl.FColor{R: 1, G: 1, B: 1, A: 1}
-		} else if int(f.Tile) < len(t.tileColors) {
-			c := t.tileColors[f.Tile]
-			if c != ([3]uint8{}) {
-				color = sdl.FColor{R: float32(c[0]) / 255, G: float32(c[1]) / 255, B: float32(c[2]) / 255, A: 1}
-			}
-		}
-		n := 4
-		if f.Indices[2] == f.Indices[3] {
-			n = 3
-		}
-		vertices := make([]sdl.Vertex, n)
-		for i := 0; i < n; i++ {
-			v := t.track.Vertices[f.Indices[i]]
-			x, z := t.point(v.X, v.Z)
-			vertices[i] = sdl.Vertex{Position: sdl.FPoint{X: x, Y: z}, Color: color, TexCoord: uv[i]}
-		}
-		indices := []int32{0, 1, 2}
-		if n == 4 {
-			indices = []int32{0, 1, 2, 0, 2, 3}
-		}
-		renderer.RenderGeometry(texture, vertices, indices)
-	}
 }
 
 func (t *TrackRenderer) DrawScenery(renderer *sdl.Renderer) {

@@ -27,3 +27,6 @@ go.work.sum
 
 # OS metadata
 .DS_Store
+
+# Runtime debug output (main.go writes this fresh every run)
+/camera_trace.log
