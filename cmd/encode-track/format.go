@@ -44,8 +44,10 @@ func convertFace(f *psx.TrackFace) trackpack.Face {
 			WeaponPad:  f.Flags&psx.TrackFaceWeapon != 0,
 			Flip:       f.Flags&psx.TrackFaceFlip != 0,
 			WeaponPad2: f.Flags&psx.TrackFaceWeapon2 != 0,
-			Special:    f.Flags&psx.TrackFaceUnknown != 0,
+			Unused16:   f.Flags&psx.TrackFaceUnused16 != 0,
 			Boost:      f.Flags&psx.TrackFaceBoost != 0,
+			StartGrid:  f.Flags&psx.TrackFaceStartGrid != 0,
+			Checkpoint: f.Flags&psx.TrackFaceCheckpoint != 0,
 		},
 	}
 }

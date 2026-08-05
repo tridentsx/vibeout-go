@@ -15,6 +15,22 @@ import (
 //go:embed shaders/basic.metal
 var basicShaderSource []byte
 
+// SPIR-V builds of the same two entry points, for platforms with no Metal
+// backend: Vulkan on Linux and Windows. Both formats are embedded and the choice
+// is made at runtime from the device's reported capabilities, so one binary runs
+// on macOS, Linux and Windows without build tags.
+//
+// Regenerate after editing either .glsl file:
+//
+//	glslang -V --target-env vulkan1.0 -o shaders/basic.vert.spv shaders/basic.vert.glsl
+//	glslang -V --target-env vulkan1.0 -o shaders/basic.frag.spv shaders/basic.frag.glsl
+//
+//go:embed shaders/basic.vert.spv
+var basicVertexSPIRV []byte
+
+//go:embed shaders/basic.frag.spv
+var basicFragmentSPIRV []byte
+
 // depthNear/depthFar bound the depth-buffer normalization done in
 // shaders/basic.metal (kept in sync there -- see that file's comment). near
 // matches the existing CPU-side near-plane clip in track.go/model.go; far is
@@ -73,9 +89,22 @@ type Frame struct {
 // fixed-size (window stays non-resizable) depth-tested pipeline and its
 // supporting textures/buffers.
 func NewDevice(window *sdl.Window, width, height int32) (*Device, error) {
-	gd, err := sdl.CreateGPUDevice(sdl.GPU_SHADERFORMAT_MSL, false, "")
+	// Ask for every format we can supply, so SDL picks whichever backend exists:
+	// Metal on macOS, Vulkan on Linux and Windows. Requesting MSL alone -- which
+	// this did while the only dev machine was a Mac -- makes device creation fail
+	// outright on Windows and Linux with "No supported SDL_GPU backend found",
+	// because no non-Apple backend can consume Metal shaders.
+	const wanted = sdl.GPU_SHADERFORMAT_MSL | sdl.GPU_SHADERFORMAT_SPIRV
+	gd, err := sdl.CreateGPUDevice(wanted, false, "")
 	if err != nil {
-		return nil, fmt.Errorf("render: create GPU device: %w", err)
+		// Report what SDL does have, so a missing Vulkan runtime is
+		// distinguishable from an unsupported GPU.
+		drivers := make([]string, 0, sdl.NumGPUDrivers())
+		for i := int32(0); i < int32(sdl.NumGPUDrivers()); i++ {
+			drivers = append(drivers, sdl.GetGPUDriver(i))
+		}
+		return nil, fmt.Errorf("render: create GPU device (need Metal or Vulkan; SDL reports drivers %v): %w",
+			drivers, err)
 	}
 	if err := gd.ClaimWindow(window); err != nil {
 		gd.Destroy()
@@ -203,11 +232,27 @@ func (d *Device) init() error {
 	return nil
 }
 
+// newShader builds one stage's shader in whichever format the device accepts.
+// Metal takes the MSL source with a per-stage entry point; Vulkan takes the
+// pre-compiled SPIR-V module for that stage, whose entry point is always "main"
+// because glslang emits one module per stage.
 func newShader(device *sdl.GPUDevice, source []byte, entrypoint string, stage sdl.GPUShaderStage, samplers uint32) (*sdl.GPUShader, error) {
+	format := sdl.GPU_SHADERFORMAT_MSL
+	code := source
+	name := entrypoint
+	if device.ShaderFormats()&sdl.GPU_SHADERFORMAT_MSL == 0 {
+		format = sdl.GPU_SHADERFORMAT_SPIRV
+		name = "main"
+		if stage == sdl.GPU_SHADERSTAGE_VERTEX {
+			code = basicVertexSPIRV
+		} else {
+			code = basicFragmentSPIRV
+		}
+	}
 	shader, err := device.CreateGPUShader(&sdl.GPUShaderCreateInfo{
-		Code:        source,
-		Entrypoint:  entrypoint,
-		Format:      sdl.GPU_SHADERFORMAT_MSL,
+		Code:        code,
+		Entrypoint:  name,
+		Format:      format,
 		Stage:       stage,
 		NumSamplers: samplers,
 	})

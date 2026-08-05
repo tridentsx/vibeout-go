@@ -63,6 +63,22 @@ func main() {
 	}
 	defer trackRenderer.Destroy()
 
+	// Animated scenery: fans spin, billboards and smoke cycle texture frames.
+	// TRACK01 is menu index 0, which maps to internal track ID 1 -- the only ID
+	// whose object bindings have been read out of the retail dispatch chain, and
+	// the one that has fans and smoke. See internal/render/scenery_anim.go.
+	sceneryAnim := gameRender.BindAnimatedScenery(gameRender.MenuIndexToTrackID[0], track.Scenery)
+	log.Printf("animated scenery: %d fan(s), %d slow smoke, %d fast smoke, %d billboard(s), %d camera(s)",
+		len(sceneryAnim.Fans), len(sceneryAnim.SmokeSlow), len(sceneryAnim.SmokeFast),
+		len(sceneryAnim.Billboards), len(sceneryAnim.Cameras))
+	// Frame textures come from TEXTURES/SMOKE.CMP and TEXTURES/<set>RED.CMP, not
+	// from the track's SCENE.CMP.
+	if err := sceneryAnim.LoadFrameTextures(device, loader, gameRender.MenuIndexToTrackID[0]); err != nil {
+		log.Printf("optional animation textures: %v", err)
+	}
+	log.Printf("animation frames: %d smoke, %d billboard",
+		len(sceneryAnim.SmokeTextures), len(sceneryAnim.BillboardTextures))
+
 	// TERRY.PRM holds the five real per-team craft hulls (confirmed against a
 	// real PRM viewer): quirex1/fiesar1/auricom2/ag1/piranha2, matching the
 	// five team names in the executable's own strings (QIREX/FEISAR/AURICOM/
@@ -95,7 +111,19 @@ func main() {
 		log.Fatal(err)
 	}
 	game.ApplyRaceShipSpec(ship, spec)
-	if err := game.PlaceShipOnStartingGrid(ship, track, 0, 0); err != nil {
+	// The craft starts on the grid, not on the line: the grid is the run of
+	// sections flagged TrackFaceStartGrid (290-319 on TRACK01), while the
+	// per-track table gives the start/finish line (section 5 there).
+	// The grid is walked backwards from the start/finish line. A lone craft in a
+	// single race starts in the last slot; other modes resolve the slot from
+	// qualifying or standings. The slot also picks which side of the road the craft
+	// sits on, so it must be passed through rather than flattened to zero.
+	trackID := gameRender.MenuIndexToTrackID[0]
+	lineSection := game.TrackStartLineSection[trackID]
+	const gridSlots = 15
+	gridSlot := game.PlayerGridSlot(gridSlots)
+	log.Printf("start line at section %d; craft in grid slot %d of %d", lineSection, gridSlot, gridSlots)
+	if err := game.PlaceShipOnStartingGrid(ship, track, lineSection, gridSlot); err != nil {
 		log.Fatal(err)
 	}
 	physics.UpdateShipOrientationVectors(ship)
@@ -202,6 +230,7 @@ func main() {
 			physics.IntegratePitchAndRoll(ship)
 			camera.Update(ship, track.Sections)
 			camera.AdvanceRaceStart()
+			sceneryAnim.Tick()
 			physicsTicks++
 			// Keep a frame-synchronous scalar trace for comparison with the
 			// DuckStation debugger. A breakpoint hit and a row in this file
@@ -247,7 +276,7 @@ func main() {
 		}
 		trackRenderer.DrawSkyPerspective(frame, camera.Camera, 1280, 720)
 		trackRenderer.DrawPerspective(frame, camera.Camera, 1280, 720)
-		trackRenderer.DrawSceneryPerspective(frame, camera.Camera, 1280, 720)
+		trackRenderer.DrawSceneryPerspectiveAnimated(frame, camera.Camera, 1280, 720, sceneryAnim)
 		if camera.View == gameRender.CameraExternal {
 			gameRender.DrawShipPerspective(frame, camera.Camera, ship, craft, craftTextures, craftModel.Pages, 1280, 720)
 		}

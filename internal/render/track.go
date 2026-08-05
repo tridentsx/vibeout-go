@@ -310,7 +310,16 @@ func (t *TrackRenderer) Destroy() {
 // DrawSceneryPerspective submits SCENE.PRM's decorative track-side objects
 // (billboards, structures) at their authored scale (1x).
 func (t *TrackRenderer) DrawSceneryPerspective(frame *Frame, camera Camera, width, height float32) {
-	drawObjectsPerspective(frame, camera, t.track.Scenery, t.sceneryTextures, t.track.SceneryTiles, 1, width, height)
+	drawObjectsPerspective(frame, camera, t.track.Scenery, t.sceneryTextures, t.track.SceneryTiles, 1, width, height, nil)
+}
+
+// DrawSceneryPerspectiveAnimated is DrawSceneryPerspective with the animated
+// objects' current state applied: fans spun to their shared angle and
+// billboard/smoke objects showing their current texture frame. Pass the
+// AnimatedScenery that BindAnimatedScenery produced for this track.
+func (t *TrackRenderer) DrawSceneryPerspectiveAnimated(frame *Frame, camera Camera, width, height float32, anim *AnimatedScenery) {
+	overrides := anim.Overrides()
+	drawObjectsPerspective(frame, camera, t.track.Scenery, t.sceneryTextures, t.track.SceneryTiles, 1, width, height, overrides)
 }
 
 // DrawSkyPerspective submits SKY.PRM's horizon backdrop. Confirmed against
@@ -323,7 +332,41 @@ func (t *TrackRenderer) DrawSceneryPerspective(frame *Frame, camera Camera, widt
 // the clear color through that gap, i.e. genuinely no geometry there.
 func (t *TrackRenderer) DrawSkyPerspective(frame *Frame, camera Camera, width, height float32) {
 	const skyScale = 48
-	drawObjectsPerspective(frame, camera, t.track.Sky, t.skyTextures, t.track.SkyTiles, skyScale, width, height)
+	drawObjectsPerspective(frame, camera, t.track.Sky, t.skyTextures, t.track.SkyTiles, skyScale, width, height, nil)
+}
+
+// SceneryOverride is per-object animation state applied at draw time. Retail
+// animates scenery by mutating the object's own node and GPU primitives in RAM
+// (see scenery_anim.go); this carries the equivalent as a draw-time override so
+// the decoded PRM data stays immutable and shareable.
+//
+// Roll rotates the object's local vertices about its forward axis, which is what
+// maybe_RotateFanObjects does by writing the shared angle into the node's roll
+// slot. TextureIndex substitutes a decoded texture for the polygon's own,
+// standing in for retail's per-primitive texture-page/CLUT swap -- the frames are
+// separate decoded RGBA textures here, since psx.Image resolves CLUTs at load.
+// SceneryOverride is per-object animation state applied at draw time. Retail
+// animates scenery by mutating the object's own node and GPU primitives in RAM
+// (see scenery_anim.go); this carries the equivalent as a draw-time override so
+// the decoded PRM data stays immutable and shareable.
+//
+// Roll rotates the object's local vertices about its forward axis, which is what
+// maybe_RotateFanObjects does by writing the shared angle into the node's roll
+// slot. Texture substitutes a decoded frame for the polygon's own, standing in
+// for retail's per-primitive texture-page/CLUT swap.
+//
+// PanelUVs makes the substituted frame span the whole object rather than
+// repeating per polygon. A "redb" billboard is four quads that between them show
+// one image: retail stamps each panel a different sub-rectangle of the frame,
+// offsetting by the descriptor's width and height fields
+// (maybe_AnimateBillboardTextureFrames, 0x800484a8). Reusing the authored UVs on
+// every panel instead drew four copies of the frame in a 2x2 grid -- and the
+// authored UVs cannot be reused anyway, since they address a 4x4 placeholder
+// texture while the real frames are 128x128.
+type SceneryOverride struct {
+	Roll     game.Angle
+	Texture  *sdl.GPUTexture
+	PanelUVs bool
 }
 
 // drawObjectsPerspective submits a flat list of PRM objects (scenery or sky)
@@ -332,8 +375,9 @@ func (t *TrackRenderer) DrawSkyPerspective(frame *Frame, camera Camera, width, h
 // for why sky needs this and scenery doesn't). images is the same-order,
 // same-index decoded source for textures (see textureDimensions) so a
 // polygon's raw PRM UV bytes can be normalized against its own texture's
-// actual pixel size.
-func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object, textures []*sdl.GPUTexture, images []*assets.Image, objectScale, width, height float32) {
+// actual pixel size. overrides may be nil; when present it is keyed by index
+// into objects and supplies per-object animation state.
+func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object, textures []*sdl.GPUTexture, images []*assets.Image, objectScale, width, height float32, overrides map[int]SceneryOverride) {
 	if frame == nil {
 		return
 	}
@@ -347,7 +391,19 @@ func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object
 	} else {
 		right = game.Vector3{X: 1}
 	}
-	for _, obj := range objects {
+	for objIndex, obj := range objects {
+		override, animated := overrides[objIndex]
+		var rollSin, rollCos float32
+		if animated && override.Roll != 0 {
+			rollSin, rollCos = override.Roll.Sin(), override.Roll.Cos()
+		}
+		// For a frame that spans several panels, the object's own local extent is
+		// the UV frame of reference: each polygon then takes the sub-rectangle its
+		// vertices occupy within that extent.
+		var extent objectExtent
+		if animated && override.PanelUVs {
+			extent = measureObjectExtent(obj)
+		}
 		for _, polygon := range obj.Polygons {
 			if polygon.Type == assets.PolygonSpriteTopAnchor || polygon.Type == assets.PolygonSpriteBottomAnchor {
 				submitSpritePerspective(frame, camera, right, obj, polygon, textures, objectScale, focalX, focalY, width, height, near)
@@ -368,6 +424,14 @@ func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object
 					break
 				}
 				v := obj.Vertices[index]
+				localX, localY := float32(v.X)*objectScale, float32(v.Y)*objectScale
+				if animated && override.Roll != 0 {
+					// Roll is rotation about the object's forward axis, matching the
+					// slot retail writes the shared fan angle into. Applied to the
+					// local offset so the object spins in place rather than orbiting
+					// its Position.
+					localX, localY = localX*rollCos-localY*rollSin, localX*rollSin+localY*rollCos
+				}
 				// Header.Origin equals Header.Position for both scenery and sky
 				// objects (confirmed by direct inspection), so subtracting it here --
 				// as DrawShipPerspective does for craft, where Origin and Position
@@ -376,12 +440,14 @@ func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object
 				// existing 2D DrawScenery helper already gets this right: only
 				// Position offsets the vertex.
 				world := game.Vector3{
-					X: float32(obj.Header.Position.X) + float32(v.X)*objectScale,
-					Y: float32(obj.Header.Position.Y) + float32(v.Y)*objectScale,
+					X: float32(obj.Header.Position.X) + localX,
+					Y: float32(obj.Header.Position.Y) + localY,
 					Z: float32(obj.Header.Position.Z) + float32(v.Z)*objectScale,
 				}
 				var uv sdl.FPoint
-				if i < len(polygon.UV) {
+				if animated && override.PanelUVs && extent.valid {
+					uv = extent.uvFor(float32(v.X), float32(v.Y), float32(v.Z))
+				} else if i < len(polygon.UV) {
 					uv = sdl.FPoint{X: float32(polygon.UV[i].U) / uvWidth, Y: float32(polygon.UV[i].V) / uvHeight}
 				}
 				vertices = append(vertices, perspectiveVertex{position: camera.WorldToCamera(world), uv: uv})
@@ -394,6 +460,13 @@ func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object
 				continue
 			}
 			texture, color := objectPresentation(textures, polygon)
+			if animated && override.Texture != nil {
+				// Retail swaps the primitive's texture page and CLUT per frame; the
+				// port's equivalent is a different decoded texture, taken from the
+				// frame set the animator loaded (SMOKE.CMP, <set>RED.CMP) rather than
+				// from this track's scenery tiles.
+				texture = override.Texture
+			}
 			for i := 1; i+1 < len(vertices); i++ {
 				corners := [3]perspectiveVertex{vertices[0], vertices[i], vertices[i+1]}
 				submitScreenTriangle(frame, corners, focalX, focalY, width, height, texture, color, false)
@@ -537,5 +610,130 @@ func DrawShipsTopDown(renderer *sdl.Renderer, camera Camera, ships []*game.Ship,
 		x, z := camera.ProjectTopDown(ship.Position)
 		px, py := originX+x*worldScale, originY-z*worldScale
 		renderer.RenderFillRect(&sdl.FRect{X: px - half, Y: py - half, W: half * 2, H: half * 2})
+	}
+}
+
+// objectExtent maps a PRM object's vertices into 0..1 texture space so one frame
+// spans however many polygons the object is built from.
+//
+// The mapping works in the plane the object actually occupies rather than in
+// local X/Y. Deriving it from X/Y broke in two ways on TRACK01's four "redb"
+// billboards, which are the same object placed at different orientations: one
+// billboard faces along Z, giving it a near-zero X extent, so the mapping was
+// rejected as degenerate and the authored UVs came back (four copies in a 2x2
+// grid); another faces the opposite way, so its local X ran backwards and the
+// image came out mirrored. Only the one that happened to face along X worked.
+//
+// So: take the object's surface normal, use world Y for the vertical axis, and
+// take the horizontal axis as their cross product. That is stable under any
+// yaw -- the handedness comes from the normal, not from which way local X
+// happens to point -- and it needs no per-object special casing.
+type objectExtent struct {
+	uAxis, vAxis           game.Vector3
+	minU, maxU, minV, maxV float32
+	valid                  bool
+}
+
+// measureObjectExtent builds the mapping for one object.
+func measureObjectExtent(obj assets.Object) objectExtent {
+	e := objectExtent{}
+	normal, ok := objectSurfaceNormal(obj)
+	if !ok {
+		return e
+	}
+	// Billboards, screens and smoke planes are upright, so world Y is the natural
+	// vertical. Remove any component along the normal so the axes stay orthogonal.
+	down := game.Vector3{Y: 1}
+	vAxis := sub(down, mul(normal, dot(down, normal)))
+	if length(vAxis) == 0 {
+		// A horizontal surface: no meaningful "up" in its plane. Fall back to any
+		// perpendicular rather than guessing a rotation.
+		vAxis = game.Vector3{X: 1}
+		vAxis = sub(vAxis, mul(normal, dot(vAxis, normal)))
+		if length(vAxis) == 0 {
+			return e
+		}
+	}
+	vAxis = mul(vAxis, 1/length(vAxis))
+	// cross(vAxis, normal), not cross(normal, vAxis): the latter is consistent but
+	// inverted, which mirrored every billboard horizontally once the mapping was
+	// made orientation-independent.
+	uAxis := cross(vAxis, normal)
+	if l := length(uAxis); l > 0 {
+		uAxis = mul(uAxis, 1/l)
+	} else {
+		return e
+	}
+
+	e.uAxis, e.vAxis = uAxis, vAxis
+	for _, polygon := range obj.Polygons {
+		for _, index := range polygon.Indices {
+			if int(index) >= len(obj.Vertices) {
+				continue
+			}
+			v := obj.Vertices[index]
+			local := game.Vector3{X: float32(v.X), Y: float32(v.Y), Z: float32(v.Z)}
+			u, w := dot(local, uAxis), dot(local, vAxis)
+			if !e.valid {
+				e.minU, e.maxU, e.minV, e.maxV, e.valid = u, u, w, w, true
+				continue
+			}
+			if u < e.minU {
+				e.minU = u
+			}
+			if u > e.maxU {
+				e.maxU = u
+			}
+			if w < e.minV {
+				e.minV = w
+			}
+			if w > e.maxV {
+				e.maxV = w
+			}
+		}
+	}
+	if e.valid && (e.maxU == e.minU || e.maxV == e.minV) {
+		e.valid = false
+	}
+	return e
+}
+
+// objectSurfaceNormal is the normal of the object's largest polygon, taken from
+// its geometry rather than the PRM's stored normals so it is independent of how
+// the exporter ordered those. The largest polygon is used because a billboard's
+// panels are coplanar, and a small stray polygon would otherwise pick the plane.
+func objectSurfaceNormal(obj assets.Object) (game.Vector3, bool) {
+	var best game.Vector3
+	var bestArea float32
+	for _, polygon := range obj.Polygons {
+		if len(polygon.Indices) < 3 {
+			continue
+		}
+		i0, i1, i2 := int(polygon.Indices[0]), int(polygon.Indices[1]), int(polygon.Indices[2])
+		if i0 >= len(obj.Vertices) || i1 >= len(obj.Vertices) || i2 >= len(obj.Vertices) {
+			continue
+		}
+		a := obj.Vertices[i0]
+		b := obj.Vertices[i1]
+		c := obj.Vertices[i2]
+		va := game.Vector3{X: float32(a.X), Y: float32(a.Y), Z: float32(a.Z)}
+		vb := game.Vector3{X: float32(b.X), Y: float32(b.Y), Z: float32(b.Z)}
+		vc := game.Vector3{X: float32(c.X), Y: float32(c.Y), Z: float32(c.Z)}
+		n := cross(sub(vb, va), sub(vc, va))
+		if area := length(n); area > bestArea {
+			bestArea, best = area, mul(n, 1/area)
+		}
+	}
+	return best, bestArea > 0
+}
+
+// uvFor maps a local vertex position into the object's plane, so the frame is
+// drawn once across the whole object. World Y points down in WipEout, so V
+// follows the vertical axis directly.
+func (e objectExtent) uvFor(x, y, z float32) sdl.FPoint {
+	local := game.Vector3{X: x, Y: y, Z: z}
+	return sdl.FPoint{
+		X: (dot(local, e.uAxis) - e.minU) / (e.maxU - e.minU),
+		Y: (dot(local, e.vAxis) - e.minV) / (e.maxV - e.minV),
 	}
 }

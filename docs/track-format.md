@@ -67,7 +67,8 @@ TRACK01.trackpack/
         "flip": false,             // flip texture horizontally (flag bit 2)
         "flags": {                 // decoded triggers + raw byte
           "raw": 33, "track": true, "weaponPad": false, "flip": false,
-          "weaponPad2": false, "special": false, "boost": true
+          "weaponPad2": false, "unused16": false, "boost": true,
+        "startGrid": false, "checkpoint": false
         }
       }
     ],
@@ -101,9 +102,15 @@ Notes:
   LOD, so the med/far tables are not carried.
 - `visibility` (TRACK.VEW section-visibility lists) is intentionally omitted;
   a modern renderer uses frustum culling.
-- Face flag bits (raw byte preserved; names per `internal/psx` — the WO2097
-  meanings of bits 1/3/4 are still being confirmed against bn-psx):
-  `1 track`, `2 weaponPad`, `4 flip`, `8 weaponPad2`, `16 special`, `32 boost`.
+- Face flag bits (raw byte preserved; names per `internal/psx`):
+  `1 track`, `2 weaponPad`, `4 flip`, `8 weaponPad2`, `16 unused`, `32 boost`,
+  `64 startGrid`, `128 checkpoint` -- all eight now confirmed against SLES_003.27
+  by scanning every read of the flags byte (84 sites) and recording which mask
+  each tests. Two corrections to the earlier list: bit 16 is **never set and
+  never read** (zero of 1406 faces on TRACK01, zero of the 84 code sites), so
+  calling it "special" implied a meaning it does not have; and bits 64/128 were
+  missing entirely, though the loader always stored them -- only the names were
+  absent. TRACK01 carries 60 startGrid faces and 4 checkpoint faces.
   Section flag bits: `1 jump`, `8 junctionEnd`, `16 junctionStart`, `32 junction`.
 
 ## Encoder: `cmd/encode-track`

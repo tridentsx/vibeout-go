@@ -45,12 +45,14 @@ type Face struct {
 // FaceFlags preserves the raw flag byte plus decoded triggers.
 type FaceFlags struct {
 	Raw        uint8 `json:"raw"`
-	Track      bool  `json:"track"`      // bit 0: drivable base
-	WeaponPad  bool  `json:"weaponPad"`  // bit 1
-	Flip       bool  `json:"flip"`       // bit 2
-	WeaponPad2 bool  `json:"weaponPad2"` // bit 3
-	Special    bool  `json:"special"`    // bit 4 (start grid?)
-	Boost      bool  `json:"boost"`      // bit 5
+	Track      bool  `json:"track"`      // bit 0 (0x01): section-run marker
+	WeaponPad  bool  `json:"weaponPad"`  // bit 1 (0x02): weapon pad
+	Flip       bool  `json:"flip"`       // bit 2 (0x04): horizontal texture flip
+	WeaponPad2 bool  `json:"weaponPad2"` // bit 3 (0x08): weapon pad, second variant
+	Unused16   bool  `json:"unused16"`   // bit 4 (0x10): never set, never read -- see psx.TrackFaceUnused16
+	Boost      bool  `json:"boost"`      // bit 5 (0x20): speed pad
+	StartGrid  bool  `json:"startGrid"`  // bit 6 (0x40): starting-grid run
+	Checkpoint bool  `json:"checkpoint"` // bit 7 (0x80): checkpoint face
 }
 
 // Section is a node in the track's section graph.

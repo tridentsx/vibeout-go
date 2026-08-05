@@ -91,3 +91,33 @@ func blitTile(dst, src *psx.Image, dstX, dstY int) {
 		}
 	}
 }
+
+// LoadTextureSet decodes a CMP texture archive from the shared TEXTURES
+// directory into its member images, in file order.
+//
+// Retail's animated scenery takes its frames from these files rather than from
+// the track's own SCENE.CMP: maybe_RaceMain loads TEXTURES/SMOKE.CMP right after
+// binding the "smokes"/"smokef" objects and TEXTURES/<set>RED.CMP right after
+// binding "redb", then stores each load's base index into the global texture
+// atlas for the animators to index from. The member counts corroborate the
+// constants in the animator calls -- SMOKE.CMP holds exactly 25 frames against
+// arg5 = 0x19, and each <set>RED.CMP holds exactly 2 against arg5 = 2.
+func (l Loader) LoadTextureSet(name string) ([]*psx.Image, error) {
+	data, err := l.read("TEXTURES", name)
+	if err != nil {
+		return nil, err
+	}
+	members, err := psx.DecodeCMP(data)
+	if err != nil {
+		return nil, fmt.Errorf("assets: %s: %w", name, err)
+	}
+	images := make([]*psx.Image, 0, len(members))
+	for i, member := range members {
+		image, err := psx.DecodeTIM(member)
+		if err != nil {
+			return nil, fmt.Errorf("assets: %s member %d: %w", name, i, err)
+		}
+		images = append(images, image)
+	}
+	return images, nil
+}

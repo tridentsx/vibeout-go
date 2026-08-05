@@ -36,15 +36,61 @@ func DecodeTRV(data []byte) ([]TrackVertex, error) {
 	return vertices, nil
 }
 
-// TrackFace flag bits, ported from wipeout.js's Wipeout.TrackFace.FLAGS.
+// TrackFace flag bits. The names originally came from wipeout.js's
+// Wipeout.TrackFace.FLAGS; the meanings below are confirmed against SLES_003.27
+// by scanning every read of the flags byte -- 84 sites -- and recording which
+// mask each one tests. The split by subsystem is what makes them convincing:
+// Flip is touched by nothing but the three face-drawing functions, Boost by
+// nothing but ship physics and the AI, and the two weapon-pad bits only by the
+// classifier that also registers pad triggers.
+//
+// Nothing is lost at load: decodeTrackFaces stores the whole byte, so these
+// constants only name bits that were always present in TrackFace.Flags.
 const (
-	TrackFaceWall    = 0
-	TrackFaceTrack   = 1
-	TrackFaceWeapon  = 2
-	TrackFaceFlip    = 4
-	TrackFaceWeapon2 = 8
-	TrackFaceUnknown = 16
-	TrackFaceBoost   = 32
+	TrackFaceWall   = 0
+	TrackFaceTrack  = 1 // section-run marker; every face scan is `while ((flags & 1) == 0)`
+	TrackFaceWeapon = 2 // weapon pad; coloured (0xff,0x23,0x75) pink at load
+	TrackFaceFlip   = 4 // flip texture horizontally; read only by the face drawers
+
+	TrackFaceWeapon2 = 8 // second weapon-pad variant; coloured (0x54,0xee,0x75) green
+
+	// TrackFaceUnused16 is tested at zero of the 84 flag-read sites in
+	// SLES_003.27. It was previously called TrackFaceUnknown and exported to
+	// track.json as "special", which reads as a meaning it does not have. Kept
+	// under a name that says so, rather than removed, because the bit does occur
+	// in .TRF data and dropping the constant would just hide it again.
+	TrackFaceUnused16 = 16
+
+	// TrackFaceUnknown is retained as a deprecated alias so existing callers keep
+	// compiling. Prefer TrackFaceUnused16.
+	TrackFaceUnknown = TrackFaceUnused16
+
+	TrackFaceBoost = 32 // speed pad; coloured (0x23,0x23,0xff) blue
+
+	// TrackFaceAlternateRoute marks a run of sections forming a branch of a track
+	// fork. sub_8004c108 counts consecutive sections carrying it, called from
+	// maybe_FindSectionByDifficulty (0x8004c1dc), and it is coloured (0x80,0,0)
+	// dark red at load.
+	//
+	// This was briefly named TrackFaceStartGrid, on the strength of that
+	// "difficulty"/section-run pairing. The track geometry disproves it: on
+	// TRACK01 the flagged run is sections 290..319, and walking Previous back from
+	// the start/finish line goes 5,4,3,2,1,0,288,287,286,285,284,283 -- section 0's
+	// previous is 288, so the flagged run is not on the racing line at all. It sits
+	// on the far side of the fork that leaves at sections 283/284 (nextJunction
+	// 320) and is reachable from the junction at 257/258 (nextJunction 289).
+	// Craft placed on it start on a bypass rather than on the grid.
+	TrackFaceAlternateRoute = 64
+
+	// TrackFaceStartGrid is retained as a deprecated alias for the bit, since
+	// callers were written against that name. Prefer TrackFaceAlternateRoute.
+	TrackFaceStartGrid = TrackFaceAlternateRoute
+
+	// TrackFaceCheckpoint marks checkpoint faces. The load-time classifier records
+	// each one's section index into 6-byte records, and maybe_FindShipCurrentSection
+	// walks that same array for exactly six iterations -- matching the six section
+	// slots per CPOINT*.CHK file this project already decodes. Coloured white.
+	TrackFaceCheckpoint = 128
 )
 
 // TrackFace is one .TRF record: a quad into TrackVertex (Indices[3] repeats

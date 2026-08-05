@@ -24,19 +24,28 @@ const (
 
 // RaceCamera holds the state that the original keeps at and immediately after
 // 0x800bde0c. In particular, the external camera cannot be represented by a
-// stateless position formula: UpdateChaseCameraFollow integrates a persistent
-// spring velocity toward the track centerline. The symbol at SLES_003.27
-// 0x80020608 is a phantom entry in the recovered database (Binary Ninja's
-// function_at resolves that address into the unrelated, preceding
-// maybe_ResetShipCollisionState, 0x80020560-0x80020610), so the vertical
-// clearance term is ported from wipeout-rewrite's camera_update_race_external
-// (src/wipeout/camera.c) instead: it folds into the same spring as X/Z rather
-// than accumulating in a separately-decaying field.
+// stateless position formula: UpdateChaseCameraFollow (0x80020608) integrates a
+// persistent spring velocity toward the track centerline, plus a second,
+// slower-decaying vertical clearance accumulator.
+//
+// That function was previously unreadable: Binary Ninja placed a function four
+// bytes past 0x80020608, so the address resolved into the unrelated preceding
+// routine and the clearance logic had to be substituted from wipeout-rewrite.
+// The cause was a delay-slot double count in bn-psx's R3000A architecture which
+// shifted 147 function boundaries by one instruction; with that fixed the real
+// entry is claimed and both terms below are the retail ones.
 type RaceCamera struct {
 	Camera
 	View           CameraView
 	Section        int
 	SpringVelocity game.Vector3
+	// ClearanceBias is the retail vertical-clearance accumulator, kept at
+	// gp+128 (0x80094990) and updated at 0x80020850-0x8002088c. It decays at
+	// /16 per frame, independently of SpringVelocity's /8, and is subtracted
+	// from the anchor's Y after the spring is applied. Steady state is
+	// |correction|/8, so it lifts the camera further than folding the term into
+	// the spring would.
+	ClearanceBias float32
 	// RaceStartTimer mirrors ship+0xe0 while the retail start-camera
 	// callback is active.  Race setup initializes it to 0xa6 and the callback
 	// hands off to the normal view at 0x64.
@@ -193,15 +202,11 @@ func (c *RaceCamera) updateExternal(ship *game.Ship, sections []assets.TrackSect
 		projected := projectPointToRay(position, sectionPoint(previous), sectionPoint(section))
 		errorFromCenter := sub(position, projected)
 
-		// wipeout-rewrite folds the vertical clearance boost directly into the
-		// same acceleration vector as X/Z (camera.c:48-49) rather than
-		// accumulating it in a second, independently-decaying term: doubling
-		// up the correction (once through SpringVelocity, again through a
-		// slower-decaying ClearanceBias) was pushing the camera far above the
-		// ship whenever it sat off the centerline, keeping it out of frame.
-		correction := errorFromCenter
-		correction.Y += length(errorFromCenter) * 0.5
-		correction = mul(correction, 60.0/50.0)
+		// UpdateChaseCameraFollow (0x80020608) scales the centerline error by
+		// 60/50 before using it. The literal sequence is err*60 (sll 4, sub,
+		// sll 2) then a 0x51eb851f multiply whose mfhi>>4 is /50, at
+		// 0x800206fc-0x80020760.
+		correction := mul(errorFromCenter, 60.0/50.0)
 
 		c.SpringVelocity.X -= correction.X / 64
 		c.SpringVelocity.Y -= correction.Y / 64
@@ -210,6 +215,34 @@ func (c *RaceCamera) updateExternal(ship *game.Ship, sections []assets.TrackSect
 		c.SpringVelocity.Y -= c.SpringVelocity.Y / 8
 		c.SpringVelocity.Z -= c.SpringVelocity.Z / 8
 		position = add(position, c.SpringVelocity)
+
+		// Vertical clearance, read from 0x80020850-0x8002088c. This is a
+		// *second* accumulator with its own, slower decay -- not a term folded
+		// into the spring:
+		//
+		//   VectorMagnitude3D(correction)      ; the 60/50-scaled error
+		//   clearance += magnitude >> 7        ; /128
+		//   clearance -= clearance >> 4        ; /16, slower than the spring's /8
+		//   anchor.Y  -= clearance
+		//
+		// An earlier revision here substituted wipeout-rewrite's
+		// camera_update_race_external, which folds the boost into the same
+		// acceleration vector as X/Z (correction.Y += length*0.5), because
+		// 0x80020608 could not be read: Binary Ninja had placed a function four
+		// bytes past that address, leaving the real entry unclaimed. That was an
+		// architecture bug in bn-psx (a delay-slot double count that shifted 147
+		// function boundaries) and is now fixed, so the retail form is used.
+		//
+		// The reason the separate accumulator misbehaved when it was first tried
+		// is the constants, not the structure: the increment is magnitude/128 and
+		// the decay is /16. Folding it through SpringVelocity as well double-counts.
+		//
+		// Retail keeps this at gp+128 (0x80094990), i.e. one global shared by all
+		// cameras; per-camera state here differs only in two-player, where the
+		// original would have both views feeding one accumulator.
+		c.ClearanceBias += length(correction) / 128
+		c.ClearanceBias -= c.ClearanceBias / 16
+		position.Y -= c.ClearanceBias
 	}
 
 	// The camera node stores -shipYaw and -shipPitch at
