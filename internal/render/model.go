@@ -17,10 +17,16 @@ func FindObject(objects []assets.Object, name string) *assets.Object {
 }
 
 // DrawShipPerspective draws PRM geometry using the ship's confirmed Forward
-// and Right orientation rows. Textured primitives retain their decoded color
-// modulation but currently use flat color until the ship texture-page mapping
-// is connected.
-func DrawShipPerspective(frame *Frame, camera Camera, ship *game.Ship, object *assets.Object, width, height float32) {
+// and Right orientation rows. textures/images are the craft model's paired
+// CMP texture pages (see assets.Loader.LoadModel), index-aligned and
+// consumed the same way as scenery/sky: objectPresentation resolves each
+// polygon's Texture index to a GPU texture (falling back to its decoded
+// flat color when untextured or unresolvable), and textureDimensions
+// normalizes its raw PRM UV bytes against that specific texture's actual
+// pixel size -- the same fix DrawSceneryPerspective needed, since TERRY.CMP's
+// pages are all well under 256px (e.g. 64x96, 32x64) and a fixed /255 would
+// under-divide and sample only their left/top fraction.
+func DrawShipPerspective(frame *Frame, camera Camera, ship *game.Ship, object *assets.Object, textures []*sdl.GPUTexture, images []*assets.Image, width, height float32) {
 	if frame == nil || ship == nil || object == nil {
 		return
 	}
@@ -32,11 +38,13 @@ func DrawShipPerspective(frame *Frame, camera Camera, ship *game.Ship, object *a
 		if len(polygon.Indices) < 3 {
 			continue
 		}
+		uvWidth, uvHeight := textureDimensions(images, polygon.Texture)
 		n := len(polygon.Indices)
 		vertices := make([]perspectiveVertex, 0, n+2)
 		valid := true
 		for slot := 0; slot < n; slot++ {
-			index := polygon.Indices[quadIndexOrder(n, slot)]
+			i := quadIndexOrder(n, slot)
+			index := polygon.Indices[i]
 			if int(index) >= len(object.Vertices) {
 				valid = false
 				break
@@ -50,7 +58,11 @@ func DrawShipPerspective(frame *Frame, camera Camera, ship *game.Ship, object *a
 				Y: ship.Position.Y + ship.Right.Y*localX + up.Y*localY + ship.Forward.Y*localZ,
 				Z: ship.Position.Z + ship.Right.Z*localX + up.Z*localY + ship.Forward.Z*localZ,
 			}
-			vertices = append(vertices, perspectiveVertex{position: camera.WorldToCamera(world)})
+			var uv sdl.FPoint
+			if i < len(polygon.UV) {
+				uv = sdl.FPoint{X: float32(polygon.UV[i].U) / uvWidth, Y: float32(polygon.UV[i].V) / uvHeight}
+			}
+			vertices = append(vertices, perspectiveVertex{position: camera.WorldToCamera(world), uv: uv})
 		}
 		if !valid {
 			continue
@@ -59,10 +71,10 @@ func DrawShipPerspective(frame *Frame, camera Camera, ship *game.Ship, object *a
 		if len(vertices) < 3 {
 			continue
 		}
-		color := polygonColor(polygon)
+		texture, color := objectPresentation(textures, polygon)
 		for i := 1; i+1 < len(vertices); i++ {
 			corners := [3]perspectiveVertex{vertices[0], vertices[i], vertices[i+1]}
-			submitScreenTriangle(frame, corners, focalX, focalY, width, height, nil, color, true)
+			submitScreenTriangle(frame, corners, focalX, focalY, width, height, texture, color, true)
 		}
 	}
 }

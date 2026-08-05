@@ -69,14 +69,25 @@ func main() {
 	// AG SYSTEMS/PIRANHA). VECTO.PRM's standalone "vect" and HARRY.PRM's
 	// bundled "vect"/"ven"/"rap"/"phant" are menu class-select icons, not
 	// this craft. This preview defaults to the FEISAR team ("fiesar1").
-	craftObjects, err := loader.LoadPRM("COMMON", "TERRY.PRM")
-	if err != nil || len(craftObjects) == 0 {
-		log.Fatalf("load player craft: objects=%d err=%v", len(craftObjects), err)
+	craftModel, err := loader.LoadModel("COMMON", "TERRY.PRM")
+	if err != nil || len(craftModel.Objects) == 0 {
+		log.Fatalf("load player craft: objects=%d err=%v", len(craftModel.Objects), err)
 	}
-	craft := gameRender.FindObject(craftObjects, "fiesar1")
+	for _, warning := range craftModel.Warnings {
+		log.Printf("optional craft asset: %v", warning)
+	}
+	craft := gameRender.FindObject(craftModel.Objects, "fiesar1")
 	if craft == nil {
 		log.Fatal("load player craft: TERRY.PRM has no \"fiesar1\" object")
 	}
+	craftTextures := device.NewTextures(craftModel.Pages)
+	defer func() {
+		for _, texture := range craftTextures {
+			if texture != nil {
+				device.ReleaseTexture(texture)
+			}
+		}
+	}()
 
 	ship := &game.Ship{ControlSource: game.ControlLocalPlayer, Flags: 0x248}
 	spec, err := game.RaceShipSpec(0, 0)
@@ -238,7 +249,7 @@ func main() {
 		trackRenderer.DrawPerspective(frame, camera.Camera, 1280, 720)
 		trackRenderer.DrawSceneryPerspective(frame, camera.Camera, 1280, 720)
 		if camera.View == gameRender.CameraExternal {
-			gameRender.DrawShipPerspective(frame, camera.Camera, ship, craft, 1280, 720)
+			gameRender.DrawShipPerspective(frame, camera.Camera, ship, craft, craftTextures, craftModel.Pages, 1280, 720)
 		}
 		if err := device.Present(frame); err != nil {
 			log.Printf("render: present: %v", err)

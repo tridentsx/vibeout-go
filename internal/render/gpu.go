@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/Zyko0/go-sdl3/sdl"
+	"github.com/tridentsx/wipeout-go/internal/assets"
 )
 
 //go:embed shaders/basic.metal
@@ -268,6 +269,26 @@ func (d *Device) NewTexture(width, height int, pixels []byte) (*sdl.GPUTexture, 
 		return nil, fmt.Errorf("render: submit texture upload: %w", err)
 	}
 	return tex, nil
+}
+
+// NewTextures uploads a same-index-order set of decoded images to the GPU
+// (a CMP's texture pages -- scenery, sky, or a craft model's), skipping any
+// index whose image is nil (an undecodable CMP member) or that fails
+// upload, so the returned slice stays index-aligned with the source even
+// when incomplete.
+func (d *Device) NewTextures(images []*assets.Image) []*sdl.GPUTexture {
+	textures := make([]*sdl.GPUTexture, len(images))
+	for i, img := range images {
+		if img == nil {
+			continue
+		}
+		tex, err := d.NewTexture(int(img.Width), int(img.Height), img.Pixels)
+		if err != nil {
+			continue
+		}
+		textures[i] = tex
+	}
+	return textures
 }
 
 // BeginFrame acquires a command buffer and the swapchain texture this frame
