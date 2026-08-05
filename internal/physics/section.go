@@ -16,62 +16,78 @@ func UpdateShipTrackSection(ship *Ship, track *assets.Track) (float32, error) {
 		return 0, fmt.Errorf("physics: section update requires a ship and track")
 	}
 	current := int(ship.SectionID)
-	if !validSectionIndex(current, track.Sections) {
-		return 0, fmt.Errorf("physics: section %d out of range", current)
+	best, distance, err := NearestTrackSection(ship.Position, track.Sections, current)
+	if err != nil {
+		return 0, err
 	}
-	previous := current
+	ship.PreviousSectionID = int16(current)
+	ship.SectionID = int16(best)
+	return distance, nil
+}
+
+// NearestTrackSection is UpdateShipTrackSection's graph search, factored out
+// to take a bare world position instead of a *Ship so non-ship trackers (the
+// chase camera; see render.RaceCamera) can follow the same junction-aware
+// path the ship's own physics does. A junction-blind search that only ever
+// follows .Next/.Previous silently tracks the *other* branch of a fork
+// (WipEout's parallel-section forks, e.g. a boost-pad shortcut) whenever the
+// tracked entity actually took the branch through .NextJunction, which is
+// exactly what an earlier camera-only reimplementation of this search did:
+// the chase camera visibly drifted ahead of the ship across a fork and ended
+// up in front of it by the time the branches rejoined.
+func NearestTrackSection(position Vector3, sections []assets.TrackSection, current int) (int, float32, error) {
+	if !validSectionIndex(current, sections) {
+		return 0, 0, fmt.Errorf("physics: section %d out of range", current)
+	}
 
 	candidate := current
 	for range 3 {
-		candidate = int(track.Sections[candidate].Previous)
-		if !validSectionIndex(candidate, track.Sections) {
-			return 0, fmt.Errorf("physics: invalid Previous link in section search")
+		candidate = int(sections[candidate].Previous)
+		if !validSectionIndex(candidate, sections) {
+			return 0, 0, fmt.Errorf("physics: invalid Previous link in section search")
 		}
 	}
-	initialFlags := track.Sections[candidate].Flags
+	initialFlags := sections[candidate].Flags
 	best := candidate
-	bestDistanceSquared := sectionDistanceSquared(ship.Position, track.Sections[candidate])
+	bestDistanceSquared := sectionDistanceSquared(position, sections[candidate])
 	junction := -1
 
 	for range 6 {
-		candidate = int(track.Sections[candidate].Next)
-		if !validSectionIndex(candidate, track.Sections) {
-			return 0, fmt.Errorf("physics: invalid Next link in section search")
+		candidate = int(sections[candidate].Next)
+		if !validSectionIndex(candidate, sections) {
+			return 0, 0, fmt.Errorf("physics: invalid Next link in section search")
 		}
-		if link := int(track.Sections[candidate].NextJunction); link != -1 {
-			if !validSectionIndex(link, track.Sections) {
-				return 0, fmt.Errorf("physics: section %d has invalid junction link %d", candidate, link)
+		if link := int(sections[candidate].NextJunction); link != -1 {
+			if !validSectionIndex(link, sections) {
+				return 0, 0, fmt.Errorf("physics: section %d has invalid junction link %d", candidate, link)
 			}
 			junction = link
 		}
-		best, bestDistanceSquared = nearerSection(ship.Position, track.Sections, candidate, best, bestDistanceSquared)
+		best, bestDistanceSquared = nearerSection(position, sections, candidate, best, bestDistanceSquared)
 	}
 
 	if junction != -1 {
 		candidate = junction
-		if track.Sections[junction].Flags&assets.TrackSectionJunctionStart == 0 && initialFlags == assets.TrackSectionJunction {
-			candidate = int(track.Sections[candidate].Next)
-			if !validSectionIndex(candidate, track.Sections) {
-				return 0, fmt.Errorf("physics: invalid junction entry Next link")
+		if sections[junction].Flags&assets.TrackSectionJunctionStart == 0 && initialFlags == assets.TrackSectionJunction {
+			candidate = int(sections[candidate].Next)
+			if !validSectionIndex(candidate, sections) {
+				return 0, 0, fmt.Errorf("physics: invalid junction entry Next link")
 			}
 		}
 		for range 6 {
-			best, bestDistanceSquared = nearerSection(ship.Position, track.Sections, candidate, best, bestDistanceSquared)
-			if track.Sections[candidate].Flags&assets.TrackSectionJunctionEnd != 0 {
-				candidate = int(track.Sections[candidate].Previous)
+			best, bestDistanceSquared = nearerSection(position, sections, candidate, best, bestDistanceSquared)
+			if sections[candidate].Flags&assets.TrackSectionJunctionEnd != 0 {
+				candidate = int(sections[candidate].Previous)
 			} else {
-				candidate = int(track.Sections[candidate].Next)
+				candidate = int(sections[candidate].Next)
 			}
-			if !validSectionIndex(candidate, track.Sections) {
-				return 0, fmt.Errorf("physics: invalid link in junction section search")
+			if !validSectionIndex(candidate, sections) {
+				return 0, 0, fmt.Errorf("physics: invalid link in junction section search")
 			}
 		}
 	}
 
-	distance := float32(math.Sqrt(float64(bestDistanceSquared)))
-	ship.PreviousSectionID = int16(previous)
-	ship.SectionID = int16(best)
-	return distance, nil
+	return best, float32(math.Sqrt(float64(bestDistanceSquared))), nil
 }
 
 func nearerSection(position Vector3, sections []assets.TrackSection, candidate, best int, bestDistanceSquared float32) (int, float32) {

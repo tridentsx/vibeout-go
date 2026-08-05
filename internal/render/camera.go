@@ -5,6 +5,7 @@ import (
 
 	"github.com/tridentsx/wipeout-go/internal/assets"
 	"github.com/tridentsx/wipeout-go/internal/game"
+	"github.com/tridentsx/wipeout-go/internal/physics"
 )
 
 // Camera is a world-space view. WipEout's world Y axis points down, so the
@@ -376,21 +377,23 @@ func radiansToAngle(radians float64) game.Angle {
 	return game.Angle(units)
 }
 
+// nearestCameraSection shares physics.NearestTrackSection -- the same
+// junction-aware graph search UpdateShipTrackSection uses to place the ship
+// -- rather than a camera-only walk that only ever follows .Next/.Previous.
+// Track forks (a boost-pad shortcut, say) branch through a section's
+// NextJunction link; a search blind to that link tracks whichever branch
+// .Next happens to point down regardless of which one the ship actually
+// took, so on the branch .Next doesn't follow, the camera's tracked section
+// visibly drifted away from the ship's real one across the fork and only
+// resynced once the branches rejoined -- by which point the camera had
+// drifted ahead of (or behind) the ship it's supposed to be chasing.
 func nearestCameraSection(point game.Vector3, sections []assets.TrackSection, current int) int {
 	if current < 0 || current >= len(sections) {
 		current = 0
 	}
-	for i := 0; i < 2; i++ {
-		current = linkedIndex(sections, int(sections[current].Previous), current)
-	}
-	best, bestDistance := current, float32(math.MaxFloat32)
-	section := current
-	for i := 0; i < 6; i++ {
-		d := length(sub(point, sectionPoint(sections[section])))
-		if d < bestDistance {
-			best, bestDistance = section, d
-		}
-		section = linkedIndex(sections, int(sections[section].Next), section)
+	best, _, err := physics.NearestTrackSection(point, sections, current)
+	if err != nil {
+		return current
 	}
 	return best
 }

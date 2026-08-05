@@ -44,5 +44,20 @@ vertex VertexOut vertexMain(VertexIn in [[stage_in]]) {
 fragment float4 fragmentMain(VertexOut in [[stage_in]],
                               texture2d<float> tex [[texture(0)]],
                               sampler samp [[sampler(0)]]) {
-    return in.color * tex.sample(samp, in.uv);
+    float4 color = in.color * tex.sample(samp, in.uv);
+    // internal/psx/tim.go's putPixel treats PS1 color-key black (0x0000) as
+    // fully transparent, not a real color, and TIM textures only ever carry
+    // that binary 0/255 alpha (no smooth gradients) -- so a plain threshold
+    // discard reproduces the original hardware's punch-through cutout
+    // exactly, without needing a blend state (this pipeline's depth
+    // test/write already assumes fully opaque-or-absent fragments). Without
+    // this, the color target write (blending is off) painted every
+    // color-keyed pixel as literal opaque black -- e.g. TRACK01's scenery
+    // billboards/decals that are mostly color-key outside a small logo
+    // rendered as solid black rectangles instead of a cutout revealing
+    // whatever is behind them.
+    if (color.a < 0.5) {
+        discard_fragment();
+    }
+    return color;
 }
