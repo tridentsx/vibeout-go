@@ -20,3 +20,6 @@ const TrackSectionJunctionEnd = psx.TrackSectionJunctionEnd
 const TrackSectionJunctionStart = psx.TrackSectionJunctionStart
 const TrackSectionJunction = psx.TrackSectionJunction
 const TrackSectionJump = psx.TrackSectionJump
+
+const PolygonSpriteTopAnchor = psx.PolygonSpriteTopAnchor
+const PolygonSpriteBottomAnchor = psx.PolygonSpriteBottomAnchor

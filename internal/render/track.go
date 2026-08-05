@@ -12,26 +12,60 @@ import (
 // loaded track. It does not read files or advance simulation state.
 type TrackRenderer struct {
 	track                                        *assets.Track
-	device                                        *Device
+	device                                       *Device
 	tileTextures                                 []*sdl.GPUTexture
 	tileColors                                   [][3]uint8
-	sceneryTextures                               []*sdl.GPUTexture
-	skyTextures                                   []*sdl.GPUTexture
+	sceneryTextures                              []*sdl.GPUTexture
+	skyTextures                                  []*sdl.GPUTexture
 	scale, offsetX, offsetZ                      float32
 	sceneryScale, sceneryOffsetX, sceneryOffsetZ float32
 }
 
-const psxProjectionDistance = float32(1000) // InitGTEProjectionState, 0x8008008c.
+// psxProjectionDistance is the GTE projection-plane distance h. WipEout's
+// documented FOV is 90 degrees horizontal (wipeout-rewrite render_gl.c:492-497
+// derives its matching 73.75-degree vertical FOV from that figure), and the
+// standard GTE convention for a 90-degree horizontal FOV is h == screenWidth/2
+// so that atan((width/2)/h) == 45 degrees. The previous value of 1000 cited
+// SLES_003.27 0x8008008c ("InitGTEProjectionState"), but that symbol is a
+// phantom entry in the recovered database: Binary Ninja's function_at
+// resolves that address into an unrelated function (sub_8007ffc0), so the
+// citation cannot be trusted. 1000 produced an ~18-degree horizontal FOV,
+// consistent with the reported symptoms (chase camera reads as glued to the
+// ship's cockpit, wingtips clipping into view, ship dropping below frame).
+const psxProjectionDistance = float32(160)
 
 type perspectiveVertex struct {
 	position game.Vector3
 	uv       sdl.FPoint
 }
 
+// prmQuadPerimeterOrder remaps a PRM quad's four Indices/UV entries from
+// their on-disk "Z" order (0=top-left, 1=top-right, 2=bottom-left,
+// 3=bottom-right) to boundary/perimeter order, confirmed against
+// wipeout.js's createModelFromObject: it always triangulates a quad as
+// {indices[2],indices[1],indices[0]} and {indices[2],indices[3],indices[1]},
+// i.e. sharing the 1-2 edge, not 0-2. A naive fan pivoting on vertex 0 (0,1,2
+// then 0,2,3) is only correct if the four vertices already wind around the
+// quad's boundary; PRM's Z order makes 0-2 a side rather than a diagonal, so
+// that fan splits the quad along the wrong line and leaves a visible gap
+// covering roughly half the square. TRACK.TRF faces are unaffected -- that
+// format already stores boundary order (confirmed by its own UV winding and
+// the existing, working track floor render).
+var prmQuadPerimeterOrder = [4]int{0, 1, 3, 2}
+
+// quadIndexOrder returns the perimeter-order position for slot i of an n-way
+// PRM polygon (n==3: unchanged; n==4: see prmQuadPerimeterOrder).
+func quadIndexOrder(n, i int) int {
+	if n == 4 {
+		return prmQuadPerimeterOrder[i]
+	}
+	return i
+}
+
 // DrawPerspective submits the track through the original camera coordinate
-// system. InitGTEProjectionState configures the retail executable's GTE with
-// H=1000 for a 320-pixel-wide display; scaling H with the output width keeps
-// that horizontal field of view when the presentation window is enlarged.
+// system. See psxProjectionDistance for how the GTE's H parameter is derived;
+// scaling it with the output width keeps the same horizontal field of view
+// when the presentation window is enlarged.
 //
 // Every face is submitted unconditionally, every frame -- confirmed against
 // both reference projects (wipeout.js and wipeout-rewrite): neither reads
@@ -276,7 +310,7 @@ func (t *TrackRenderer) Destroy() {
 // DrawSceneryPerspective submits SCENE.PRM's decorative track-side objects
 // (billboards, structures) at their authored scale (1x).
 func (t *TrackRenderer) DrawSceneryPerspective(frame *Frame, camera Camera, width, height float32) {
-	drawObjectsPerspective(frame, camera, t.track.Scenery, t.sceneryTextures, 1, width, height)
+	drawObjectsPerspective(frame, camera, t.track.Scenery, t.sceneryTextures, t.track.SceneryTiles, 1, width, height)
 }
 
 // DrawSkyPerspective submits SKY.PRM's horizon backdrop. Confirmed against
@@ -289,28 +323,46 @@ func (t *TrackRenderer) DrawSceneryPerspective(frame *Frame, camera Camera, widt
 // the clear color through that gap, i.e. genuinely no geometry there.
 func (t *TrackRenderer) DrawSkyPerspective(frame *Frame, camera Camera, width, height float32) {
 	const skyScale = 48
-	drawObjectsPerspective(frame, camera, t.track.Sky, t.skyTextures, skyScale, width, height)
+	drawObjectsPerspective(frame, camera, t.track.Sky, t.skyTextures, t.track.SkyTiles, skyScale, width, height)
 }
 
 // drawObjectsPerspective submits a flat list of PRM objects (scenery or sky)
 // through the camera. objectScale enlarges each vertex's offset from its
 // object's Position before placing it in world space (see DrawSkyPerspective
-// for why sky needs this and scenery doesn't).
-func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object, textures []*sdl.GPUTexture, objectScale, width, height float32) {
+// for why sky needs this and scenery doesn't). images is the same-order,
+// same-index decoded source for textures (see textureDimensions) so a
+// polygon's raw PRM UV bytes can be normalized against its own texture's
+// actual pixel size.
+func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object, textures []*sdl.GPUTexture, images []*assets.Image, objectScale, width, height float32) {
 	if frame == nil {
 		return
 	}
 	const near = float32(200)
 	focalX := psxProjectionDistance * width / 320
 	focalY := psxProjectionDistance * height / 240
+	right, _, _ := camera.Basis()
+	right.Y = 0
+	if rightLength := length(right); rightLength > 0 {
+		right = mul(right, 1/rightLength)
+	} else {
+		right = game.Vector3{X: 1}
+	}
 	for _, obj := range objects {
 		for _, polygon := range obj.Polygons {
+			if polygon.Type == assets.PolygonSpriteTopAnchor || polygon.Type == assets.PolygonSpriteBottomAnchor {
+				submitSpritePerspective(frame, camera, right, obj, polygon, textures, objectScale, focalX, focalY, width, height, near)
+				continue
+			}
 			if len(polygon.Indices) < 3 {
 				continue
 			}
-			vertices := make([]perspectiveVertex, 0, len(polygon.Indices)+2)
+			uvWidth, uvHeight := textureDimensions(images, polygon.Texture)
+			n := len(polygon.Indices)
+			vertices := make([]perspectiveVertex, 0, n+2)
 			valid := true
-			for i, index := range polygon.Indices {
+			for slot := 0; slot < n; slot++ {
+				i := quadIndexOrder(n, slot)
+				index := polygon.Indices[i]
 				if int(index) >= len(obj.Vertices) {
 					valid = false
 					break
@@ -330,7 +382,7 @@ func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object
 				}
 				var uv sdl.FPoint
 				if i < len(polygon.UV) {
-					uv = sdl.FPoint{X: float32(polygon.UV[i].U) / 255, Y: float32(polygon.UV[i].V) / 255}
+					uv = sdl.FPoint{X: float32(polygon.UV[i].U) / uvWidth, Y: float32(polygon.UV[i].V) / uvHeight}
 				}
 				vertices = append(vertices, perspectiveVertex{position: camera.WorldToCamera(world), uv: uv})
 			}
@@ -347,6 +399,87 @@ func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object
 				submitScreenTriangle(frame, corners, focalX, focalY, width, height, texture, color, false)
 			}
 		}
+	}
+}
+
+// textureDimensions returns the pixel width/height of the texture a polygon
+// references, so its PRM UV bytes -- raw texel offsets into that specific
+// texture, not a fixed 0-255 page (confirmed by internal/model's normUV,
+// which already divides by the referenced texture page's own W/H for the
+// glTF export path) -- normalize to the correct 0..1 fraction. Getting this
+// wrong under-divides any texture narrower than 256px (e.g. TRACK01's 128x128
+// SCENE.CMP billboards), sampling only its left/top fraction: the FSOL
+// billboard's "FSOL" text rendered as "FS" because /255 only reached u<=0.5
+// of a 128px-wide image. Falls back to 255 (a no-op scale, matching the old
+// behavior) when the texture index is absent or out of range.
+func textureDimensions(images []*assets.Image, texture *uint16) (float32, float32) {
+	if texture != nil {
+		index := int(*texture)
+		if index >= 0 && index < len(images) && images[index] != nil {
+			return float32(images[index].Width), float32(images[index].Height)
+		}
+	}
+	return 255, 255
+}
+
+// submitSpritePerspective draws a PRM sprite polygon (types 10/11) as a
+// camera-facing billboard. Confirmed against wipeout.js's
+// createModelFromObject: the sprite's anchor vertex is one of the object's
+// own vertices (SpriteIndex), the quad is centered on that anchor with a
+// vertical offset of height/2 (toward the object for a bottom anchor, away
+// from it for a top anchor -- ceiling fixtures use the bottom anchor so the
+// sprite hangs below its mount point), and it only rotates around the world
+// Y axis to face the camera (never tilting with camera pitch), which is why
+// `right` is computed once, yaw-only, by the caller and passed in rather
+// than reading camera.Basis per sprite.
+func submitSpritePerspective(frame *Frame, camera Camera, right game.Vector3, obj assets.Object, polygon assets.Polygon, textures []*sdl.GPUTexture, objectScale, focalX, focalY, width, height, near float32) {
+	if int(polygon.SpriteIndex) >= len(obj.Vertices) {
+		return
+	}
+	anchor := obj.Vertices[polygon.SpriteIndex]
+	center := game.Vector3{
+		X: float32(obj.Header.Position.X) + float32(anchor.X)*objectScale,
+		Y: float32(obj.Header.Position.Y) + float32(anchor.Y)*objectScale,
+		Z: float32(obj.Header.Position.Z) + float32(anchor.Z)*objectScale,
+	}
+	// wipeout-rewrite's render_push_sprite (render_gl.c:774-780) uses
+	// poly.spr->width/height directly as world-space half-extents (size.x *
+	// 0.5) with no scaling division, matching the same raw-vertex-unit
+	// convention as every other PRM field this renderer already trusts
+	// as-is (ship hull, scenery quads, track faces). An earlier version of
+	// this function divided by 16 based on a same-texture sample that
+	// happened to cluster near that ratio; sampling every sprite in
+	// TRACK01's SCENE.PRM shows the ratio actually spans 15x-63x for
+	// sprites sharing that identical texture, so it was never a genuine
+	// texture-relative constant -- just a coincidence of a small sample.
+	halfWidth := float32(polygon.SpriteWidth) / 2 * objectScale
+	halfHeight := float32(polygon.SpriteHeight) / 2 * objectScale
+	if polygon.Type == assets.PolygonSpriteBottomAnchor {
+		center.Y -= halfHeight
+	} else {
+		center.Y += halfHeight
+	}
+
+	corners := [4]game.Vector3{
+		{X: center.X - right.X*halfWidth, Y: center.Y - halfHeight, Z: center.Z - right.Z*halfWidth},
+		{X: center.X + right.X*halfWidth, Y: center.Y - halfHeight, Z: center.Z + right.Z*halfWidth},
+		{X: center.X + right.X*halfWidth, Y: center.Y + halfHeight, Z: center.Z + right.Z*halfWidth},
+		{X: center.X - right.X*halfWidth, Y: center.Y + halfHeight, Z: center.Z - right.Z*halfWidth},
+	}
+	uv := [4]sdl.FPoint{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}, {X: 0, Y: 1}}
+
+	vertices := make([]perspectiveVertex, 4)
+	for i, corner := range corners {
+		vertices[i] = perspectiveVertex{position: camera.WorldToCamera(corner), uv: uv[i]}
+	}
+	vertices = clipPerspectiveNearPlane(vertices, near)
+	if len(vertices) < 3 {
+		return
+	}
+	texture, color := objectPresentation(textures, polygon)
+	for i := 1; i+1 < len(vertices); i++ {
+		triangle := [3]perspectiveVertex{vertices[0], vertices[i], vertices[i+1]}
+		submitScreenTriangle(frame, triangle, focalX, focalY, width, height, texture, color, false)
 	}
 }
 

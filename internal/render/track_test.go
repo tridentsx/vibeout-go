@@ -27,8 +27,15 @@ func TestClipPerspectiveNearPlane(t *testing.T) {
 func TestProjectionDistancePreservesNativeHorizontalScale(t *testing.T) {
 	const width = float32(320)
 	focalLength := psxProjectionDistance * width / 320
-	x := width/2 + 100*focalLength/1000
-	if x != 260 {
-		t.Fatalf("projected x = %v, want 260", x)
+	if focalLength != width/2 {
+		t.Fatalf("focal length = %v, want %v (native width/2, for a 90-degree horizontal FOV)", focalLength, width/2)
+	}
+	// A point at the screen's right edge (x == width/2 in NDC-ish screen-space
+	// offset) should sit at exactly 45 degrees off the view axis, i.e.
+	// worldX/worldZ == 1, when the focal length equals half the screen width.
+	edgeOffset := width / 2
+	worldXOverZ := edgeOffset / focalLength
+	if worldXOverZ != 1 {
+		t.Fatalf("worldX/Z at screen edge = %v, want 1 (45 degrees, for a 90-degree horizontal FOV)", worldXOverZ)
 	}
 }

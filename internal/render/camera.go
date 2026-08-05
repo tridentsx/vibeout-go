@@ -23,15 +23,19 @@ const (
 
 // RaceCamera holds the state that the original keeps at and immediately after
 // 0x800bde0c. In particular, the external camera cannot be represented by a
-// stateless position formula: UpdateChaseCameraFollow (SLES_003.27 0x80020608)
-// integrates three persistent signed-16 spring velocities and a persistent
-// vertical centerline-clearance term.
+// stateless position formula: UpdateChaseCameraFollow integrates a persistent
+// spring velocity toward the track centerline. The symbol at SLES_003.27
+// 0x80020608 is a phantom entry in the recovered database (Binary Ninja's
+// function_at resolves that address into the unrelated, preceding
+// maybe_ResetShipCollisionState, 0x80020560-0x80020610), so the vertical
+// clearance term is ported from wipeout-rewrite's camera_update_race_external
+// (src/wipeout/camera.c) instead: it folds into the same spring as X/Z rather
+// than accumulating in a separately-decaying field.
 type RaceCamera struct {
 	Camera
 	View           CameraView
 	Section        int
 	SpringVelocity game.Vector3
-	ClearanceBias  float32
 	// RaceStartTimer mirrors ship+0xe0 while the retail start-camera
 	// callback is active.  Race setup initializes it to 0xa6 and the callback
 	// hands off to the normal view at 0x64.
@@ -166,7 +170,16 @@ func (c *RaceCamera) updateExternal(ship *game.Ship, sections []assets.TrackSect
 		previous := linkedSection(sections, int(section.Previous), c.Section)
 		projected := projectPointToRay(position, sectionPoint(previous), sectionPoint(section))
 		errorFromCenter := sub(position, projected)
-		correction := mul(errorFromCenter, 60.0/50.0)
+
+		// wipeout-rewrite folds the vertical clearance boost directly into the
+		// same acceleration vector as X/Z (camera.c:48-49) rather than
+		// accumulating it in a second, independently-decaying term: doubling
+		// up the correction (once through SpringVelocity, again through a
+		// slower-decaying ClearanceBias) was pushing the camera far above the
+		// ship whenever it sat off the centerline, keeping it out of frame.
+		correction := errorFromCenter
+		correction.Y += length(errorFromCenter) * 0.5
+		correction = mul(correction, 60.0/50.0)
 
 		c.SpringVelocity.X -= correction.X / 64
 		c.SpringVelocity.Y -= correction.Y / 64
@@ -175,10 +188,6 @@ func (c *RaceCamera) updateExternal(ship *game.Ship, sections []assets.TrackSect
 		c.SpringVelocity.Y -= c.SpringVelocity.Y / 8
 		c.SpringVelocity.Z -= c.SpringVelocity.Z / 8
 		position = add(position, c.SpringVelocity)
-
-		c.ClearanceBias += length(correction) / 128
-		c.ClearanceBias -= c.ClearanceBias / 16
-		position.Y -= c.ClearanceBias
 	}
 
 	// The camera node stores -shipYaw and -shipPitch at

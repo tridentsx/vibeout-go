@@ -32,9 +32,11 @@ func DrawShipPerspective(frame *Frame, camera Camera, ship *game.Ship, object *a
 		if len(polygon.Indices) < 3 {
 			continue
 		}
-		vertices := make([]perspectiveVertex, 0, len(polygon.Indices)+2)
+		n := len(polygon.Indices)
+		vertices := make([]perspectiveVertex, 0, n+2)
 		valid := true
-		for _, index := range polygon.Indices {
+		for slot := 0; slot < n; slot++ {
+			index := polygon.Indices[quadIndexOrder(n, slot)]
 			if int(index) >= len(object.Vertices) {
 				valid = false
 				break
