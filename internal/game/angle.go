@@ -20,6 +20,29 @@ func (a Angle) Wrapped() Angle {
 	return a % AngleFullTurn
 }
 
+// Signed reinterprets a as the shortest-path signed delta from zero, in
+// (-2048, 2048]: it wraps first (so a value that was never masked after
+// accumulation is still handled), then folds anything at or past half a
+// turn back across zero. Needed anywhere an Angle feeds arithmetic that
+// assumes "small negative" and "small positive" behave symmetrically (e.g.
+// decay-toward-zero: `x - x/8`) -- Angle's own storage has no such
+// symmetry, since a small negative angle is stored as a *large* unsigned
+// value (a bank of -3 degrees is stored as 4093, not -3). Applying
+// decay-toward-zero directly to that raw stored value decays it toward 0
+// from the wrong end -- 4093 reads as "far from level," so it sweeps
+// through nearly a full extra turn before happening to land back near a
+// small value, repeating every time the true angle goes negative. That
+// produced a real, reproduced bug: IntegratePitchAndRoll's roll decay,
+// applied to the raw wrapped value, made the ship visibly barrel-roll
+// through roughly two full turns per physics tick while steering.
+func (a Angle) Signed() int32 {
+	wrapped := int32(a.Wrapped())
+	if wrapped >= int32(AngleFullTurn)/2 {
+		wrapped -= int32(AngleFullTurn)
+	}
+	return wrapped
+}
+
 func (a Angle) Radians() float64 {
 	return float64(a) / float64(AngleFullTurn) * 2 * math.Pi
 }

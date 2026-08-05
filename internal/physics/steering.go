@@ -164,7 +164,7 @@ func UpdateSteeringTwist(s *Ship, twist uint8) {
 // float-to-unsigned ones.
 func IntegrateYawFromSteering(s *Ship) {
 	delta := int32(s.SteeringRate / 64)
-	s.Yaw = Angle(int32(s.Yaw) + delta)
+	s.Yaw = Angle(int32(s.Yaw) + delta).Wrapped()
 }
 
 // pitchRampStep is 0x24 (36), maybe_RunShipAutopilot's per-frame ramp for
@@ -229,13 +229,20 @@ func UpdatePitchInput(s *Ship, dpadDownHeld, dpadUpHeld bool) {
 // SteeringRate but write disjoint fields (Yaw vs Pitch/Roll), so ordering
 // between them doesn't matter.
 func IntegratePitchAndRoll(s *Ship) {
-	s.Pitch = Angle(int32(s.Pitch) + int32(s.PitchRate/16))
+	s.Pitch = Angle(int32(s.Pitch) + int32(s.PitchRate/16)).Wrapped()
 
 	s.RollRate += s.SteeringRate / 32
 	s.RollRate -= s.RollRate / 2
 
-	rollSum := int32(s.Roll) + int32(s.RollRate)
-	s.Roll = Angle(rollSum - rollSum/8)
+	// s.Roll.Signed(), not int32(s.Roll): the decay term below assumes a
+	// small negative bank and a small positive bank decay symmetrically
+	// toward zero, which only holds for a signed interpretation -- Angle's
+	// raw uint16 storage represents a small negative angle as a large
+	// value (e.g. -3 degrees is stored as 4093 of 4096), and decaying that
+	// raw value toward 0 sends it the wrong way around the circle. See
+	// Angle.Signed's doc comment for how this surfaced.
+	rollSum := s.Roll.Signed() + int32(s.RollRate)
+	s.Roll = Angle(rollSum - rollSum/8).Wrapped()
 }
 
 // DampAirbornePitchRate ports 0x80031964-0x8003198c. The -60 bias and

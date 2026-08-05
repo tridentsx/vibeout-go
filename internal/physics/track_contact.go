@@ -233,7 +233,7 @@ func applyShipAccelerationDragAndPosition(ship *Ship, acceleration Vector3) {
 	ship.Position.Z += ship.Velocity.Z / 64
 
 	brakeDifference := ship.AirBrakeLeft - ship.AirBrakeRight
-	ship.Yaw += Angle(int32(brakeDifference / 8 * ship.SpeedMagnitude / 32768))
+	ship.Yaw = (ship.Yaw + Angle(int32(brakeDifference/8*ship.SpeedMagnitude/32768))).Wrapped()
 }
 
 // trackSurfaceMinimumDistance is the literal 75-unit divisor floor at
