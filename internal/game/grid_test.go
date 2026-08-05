@@ -22,27 +22,51 @@ func TestPlaceShipOnStartingGrid(t *testing.T) {
 			{Next: 0, X: 1000},
 		},
 	}
+	// Slot 0 is an even slot, so retail uses the section's first face carrying
+	// flag bit 0x01 without advancing: the midpoint of its vertices 0 and 2,
+	// with no normal offset because that face has no normal here.
 	ship := &Ship{}
 	if err := PlaceShipOnStartingGrid(ship, track, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	if ship.Position != (Vector3{X: 200, Y: 700, Z: 200}) {
-		t.Fatalf("position = %+v", ship.Position)
+	if ship.Position != (Vector3{X: 100, Y: 1000, Z: 200}) {
+		t.Fatalf("even-slot position = %+v", ship.Position)
 	}
 	if ship.SectionID != 0 || ship.Yaw != 3072 {
 		t.Fatalf("section/yaw = %d/%d, want 0/3072", ship.SectionID, ship.Yaw)
 	}
+
+	// Slot 1 is odd, so it advances one face -- the other lane -- and that face
+	// does carry a normal, lifting the craft by normal * 75/1024.
+	odd := &Ship{}
+	if err := PlaceShipOnStartingGrid(odd, track, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	if odd.Position != (Vector3{X: 200, Y: 700, Z: 200}) {
+		t.Fatalf("odd-slot position = %+v", odd.Position)
+	}
+	if odd.Position.X == ship.Position.X {
+		t.Error("both slots landed in the same lane; the stagger is not applied")
+	}
 }
 
-func TestStartingGridOddSlotUsesDrivingFace(t *testing.T) {
+// Retail advances one face only when the slot's side flag is set, and that flag
+// starts at 0 for slot 0 and toggles per slot. So even slots take the first face
+// carrying bit 0x01 and odd slots take the one after it. This was inverted, which
+// left the craft a lane away from its pad.
+func TestStartingGridLaneParity(t *testing.T) {
 	faces := []assets.TrackFace{
 		{Flags: psx.TrackFaceTrack},
 		{},
 	}
 	section := assets.TrackSection{FirstFace: 0, NumFaces: 2}
-	index, err := startingGridFace(faces, section, 1)
-	if err != nil || index != 0 {
-		t.Fatalf("index/error = %d/%v, want 0/nil", index, err)
+	for _, tc := range []struct {
+		slot, want int
+	}{{0, 0}, {1, 1}, {2, 0}, {3, 1}, {14, 0}} {
+		index, err := startingGridFace(faces, section, tc.slot)
+		if err != nil || index != tc.want {
+			t.Errorf("slot %d: index/error = %d/%v, want %d/nil", tc.slot, index, err, tc.want)
+		}
 	}
 }
 

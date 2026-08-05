@@ -163,10 +163,19 @@ func startingGridFace(faces []assets.TrackFace, section assets.TrackSection, gri
 		if faces[index].Flags&psx.TrackFaceTrack == 0 {
 			continue
 		}
-		// The executable stores 0x10,0x20,0x40 as little-endian halfwords
-		// and indexes the resulting byte array by slot. Consequently even
-		// slots use the following face while odd slots use this track face.
-		if gridSlot&1 == 0 {
+		// InitializeRaceShipsAndStartingGrid (0x80022bbc) scans forward from the
+		// section's first face for one carrying flag bit 0x01, then advances a
+		// single face only when the slot's side flag is set:
+		//
+		//	do { f = face->0x0f & 1; face += 0x14; } while (f == 0);
+		//	face -= 0x14;
+		//	if (sideFlag[slot] != 0) face += 0x14;
+		//
+		// The side flag is built in the slot loop as `flag[i] = a0; a0 ^= 1`
+		// starting from a0 = 0, so slot 0 -- and every even slot -- uses the
+		// first flagged face, and odd slots take the next one. This was
+		// inverted, which placed the craft one lane over from its pad.
+		if gridSlot&1 != 0 {
 			index++
 		}
 		if index >= end {
