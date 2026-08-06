@@ -245,6 +245,14 @@ type GameContext struct {
 	// Challenge II. maybe_TrackSelectScreen draws "TRACK CHEAT ACTIVE" from it and
 	// raises the selectable track count to 8.
 	AllTracksUnlocked bool
+	// TeamIndex is the selected team. It has not been located in the retail context
+	// struct, so this is the port's own field rather than a mirrored offset.
+	TeamIndex uint8
+	// AnimalTeams substitutes the WIERD.PRM craft for the standard teams. Retail
+	// calls it "silly ships" and gates it on maybe_SillyShipsCheatEnabled
+	// (0x8009495c); the published route in is holding L1+R2+Start+Select while the
+	// game loads.
+	AnimalTeams bool
 	// PhantomTrackCheat is +0x63, set by Triangle x3, Circle x3. The select screen
 	// labels it "PHANTOM TRACK CHEAT ACTIVE". What it actually grants is not yet
 	// established -- it sets the selectable count to 2 or 6, not 8.

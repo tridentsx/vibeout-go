@@ -123,3 +123,52 @@ func TestStartItemReportsTheAction(t *testing.T) {
 		t.Errorf("START gave action %v, want ActionStartRace", got)
 	}
 }
+
+// The teams come from the object names inside COMMON/TERRY.PRM, and the animal set
+// from WIERD.PRM substitutes for them when that cheat is on.
+func TestTeamSets(t *testing.T) {
+	std := (&GameContext{}).Teams()
+	if len(std) != 5 {
+		t.Fatalf("%d standard teams, want 5", len(std))
+	}
+	wantObjects := []string{"quirex1", "fiesar1", "auricom2", "ag1", "piranha2"}
+	for i, want := range wantObjects {
+		if std[i].Object != want {
+			t.Errorf("team %d model object is %q, want %q", i, std[i].Object, want)
+		}
+		if std[i].Name == "" {
+			t.Errorf("team %d has no name", i)
+		}
+	}
+	animals := (&GameContext{AnimalTeams: true}).Teams()
+	if len(animals) != len(std) {
+		t.Errorf("%d animal teams, want the same count as standard", len(animals))
+	}
+	if animals[0].Object != "snail" {
+		t.Errorf("first animal model is %q, want snail", animals[0].Object)
+	}
+}
+
+// Selecting a team records it, and the class models line up with SpeedClass.
+func TestTeamSelectionAndClassModels(t *testing.T) {
+	c := NewMenuCursor()
+	ctx := &GameContext{}
+	c.Move(1, ctx) // TEAM
+	c.Activate(ctx)
+	if c.Screen() != ScreenTeam {
+		t.Fatalf("on %v, want the team screen", c.Screen())
+	}
+	c.Move(3, ctx) // AG SYSTEMS
+	c.Activate(ctx)
+	if ctx.TeamIndex != 3 {
+		t.Errorf("team index is %d, want 3", ctx.TeamIndex)
+	}
+	for i, m := range ClassModels {
+		if m.File == "" || m.Object == "" {
+			t.Errorf("class %d has no model", i)
+		}
+	}
+	if ClassModels[SpeedClassPhantom].Object != "phant" {
+		t.Errorf("Phantom model is %q, want phant", ClassModels[SpeedClassPhantom].Object)
+	}
+}

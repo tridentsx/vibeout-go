@@ -201,17 +201,44 @@ func main() {
 		}
 		splashTextures[i] = splashImage{tex: tex, w: img.Width, h: img.Height}
 	}
-	// The loading/title screen, drawn behind the overlay placeholders and on the
-	// title itself, which is what retail has on screen at both points.
+	// PALTITLE.TIM is the PAL title art. STARTPAL.TIM, used here before, is the
+	// loading screen -- a different image; the NTSC title is WIPTITLE.TIM.
 	var titleTex *sdl.GPUTexture
 	var titleW, titleH int
-	if img, imgErr := loader.LoadTIM("TEXTURES", "STARTPAL.TIM"); imgErr == nil {
+	if img, imgErr := loader.LoadTIM("TEXTURES", "PALTITLE.TIM"); imgErr == nil {
 		if tex, texErr := device.NewTexture(img.Width, img.Height, img.Pixels); texErr == nil {
 			titleTex = tex
 			titleW, titleH = img.Width, img.Height
 		}
 	} else {
 		log.Printf("title screen unavailable: %v", imgErr)
+	}
+
+	// STARTPAL.TIM is the loading screen retail shows while an overlay loads.
+	var loadTex *sdl.GPUTexture
+	var loadW, loadH int
+	if img, imgErr := loader.LoadTIM("TEXTURES", "STARTPAL.TIM"); imgErr == nil {
+		if tex, texErr := device.NewTexture(img.Width, img.Height, img.Pixels); texErr == nil {
+			loadTex, loadW, loadH = tex, img.Width, img.Height
+		}
+	}
+	// The PAL menu texture pack. Member 5 is the 320x256 background and member 0 the
+	// 288x184 panel; MENUTIMS.CMP is the NTSC equivalent.
+	var menuBackTex, menuPanelTex *sdl.GPUTexture
+	var menuBackW, menuBackH, menuPanelW, menuPanelH int
+	if imgs, cmpErr := loader.LoadTextureSet("MENUTIMP.CMP"); cmpErr == nil {
+		if len(imgs) > 5 && imgs[5] != nil {
+			if tex, e := device.NewTexture(imgs[5].Width, imgs[5].Height, imgs[5].Pixels); e == nil {
+				menuBackTex, menuBackW, menuBackH = tex, imgs[5].Width, imgs[5].Height
+			}
+		}
+		if len(imgs) > 0 && imgs[0] != nil {
+			if tex, e := device.NewTexture(imgs[0].Width, imgs[0].Height, imgs[0].Pixels); e == nil {
+				menuPanelTex, menuPanelW, menuPanelH = tex, imgs[0].Width, imgs[0].Height
+			}
+		}
+	} else {
+		log.Printf("menu artwork unavailable: %v", cmpErr)
 	}
 
 	// Start is edge-triggered: the state machine debounces, but a held key must not
@@ -414,13 +441,19 @@ func main() {
 			// Retail has the loading screen up while they load, so draw that and name
 			// the overlay over it rather than blanking to black.
 			ui.FillScreen(frame, sdl.FColor{A: 1})
-			ui.DrawSplash(frame, titleTex, titleW, titleH)
+			ui.DrawSplash(frame, loadTex, loadW, loadH)
 			if overlay, ok := states.CurrentOverlay(); ok {
 				ui.DrawTextCentered(frame, overlay.BaseName(), gameRender.RetailWidth/2, 0xe4, gameRender.White)
 			}
 		case game.StateFrontEnd:
 			ui.FillScreen(frame, sdl.FColor{A: 1})
-			ui.DrawSplash(frame, titleTex, titleW, titleH)
+			ui.DrawSplash(frame, menuBackTex, menuBackW, menuBackH)
+			if menuPanelTex != nil {
+				// Centre the 288x184 panel in the frame.
+				ui.DrawImage(frame, menuPanelTex,
+					(gameRender.RetailWidth-menuPanelW)/2, (gameRender.RetailHeight-menuPanelH)/2,
+					menuPanelW, menuPanelH, gameRender.White)
+			}
 			drawMenu(ui, frame, menu, &states.Context)
 		case game.StateTitleAttract:
 			ui.FillScreen(frame, sdl.FColor{A: 1})
@@ -492,6 +525,22 @@ func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
 
 	ui.DrawTextCentered(frame, "UP DOWN SELECT-ENTER BACK-ESC", gameRender.RetailWidth/2, 236,
 		sdl.FColor{R: 0.4, G: 0.4, B: 0.45, A: 1})
+
+	if screen == game.ScreenTeam {
+		teams := ctx.Teams()
+		for i, team := range teams {
+			colour := dim
+			if i == selected {
+				colour = gameRender.White
+			}
+			ui.DrawTextCentered(frame, team.Name, gameRender.RetailWidth/2, firstY+i*rowPitch, colour)
+		}
+		if selected < len(teams) {
+			ui.DrawTextCentered(frame, "MODEL "+teams[selected].Object,
+				gameRender.RetailWidth/2, 200, dim)
+		}
+		return
+	}
 
 	items := game.Screens[screen].Items
 	if len(items) == 0 {

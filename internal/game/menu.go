@@ -91,9 +91,8 @@ var Screens = map[MenuScreenID]MenuScreen{
 	},
 	ScreenTeam: {
 		Title: "TEAM MENU",
-		// Team names are not in maybe_BuildRaceSetupMenuLabels -- that function only
-		// writes the "TEAM" item and this screen's heading. They come from elsewhere
-		// and have not been located, so this screen has no items yet.
+		// Populated at runtime from TeamEntries, since the animal teams substitute for
+		// the standard ones when that cheat is active.
 	},
 	ScreenTrack: {
 		Title: "TRACK",
@@ -171,11 +170,14 @@ func (c *MenuCursor) Selection() int { return c.selection[c.Screen()] }
 // itemCount is how many rows the current screen has, counting the runtime-built
 // track list.
 func (c *MenuCursor) itemCount(ctx *GameContext) int {
-	if c.Screen() == ScreenTrack {
+	switch c.Screen() {
+	case ScreenTrack:
 		if ctx != nil {
 			return ctx.SelectableTrackCount()
 		}
 		return len(TrackMenuEntries)
+	case ScreenTeam:
+		return len(ctx.Teams())
 	}
 	return len(Screens[c.Screen()].Items)
 }
@@ -213,6 +215,12 @@ func (c *MenuCursor) Activate(ctx *GameContext) MenuAction {
 		}
 		c.Back()
 		return ActionNone
+	case ScreenTeam:
+		if ctx != nil && index < len(ctx.Teams()) {
+			ctx.TeamIndex = uint8(index)
+		}
+		c.Back()
+		return ActionNone
 	}
 
 	items := Screens[screen].Items
@@ -235,4 +243,72 @@ func (c *MenuCursor) Back() bool {
 	}
 	c.stack = c.stack[:len(c.stack)-1]
 	return true
+}
+
+
+// TeamEntry is one selectable team. The names come from the object names inside
+// COMMON/TERRY.PRM -- `quirex1`, `fiesar1`, `auricom2`, `ag1`, `piranha2` -- which is
+// also the file maybe_InitTrackPropPools clones to build the fifteen-ship race field.
+// maybe_BuildRaceSetupMenuLabels writes only the "TEAM" item and the "TEAM MENU"
+// heading, so the names are not in the label table.
+type TeamEntry struct {
+	// Name is the published team name.
+	Name string
+	// Object is the object name inside the PRM, which is how a loader finds the model.
+	Object string
+}
+
+// TeamEntries is the standard five teams, ordered as the objects appear in
+// TERRY.PRM.
+var TeamEntries = []TeamEntry{
+	{Name: "QIREX", Object: "quirex1"},
+	{Name: "FEISAR", Object: "fiesar1"},
+	{Name: "AURICOM", Object: "auricom2"},
+	{Name: "AG SYSTEMS", Object: "ag1"},
+	{Name: "PIRANHA", Object: "piranha2"},
+}
+
+// AnimalTeamEntries is the set from COMMON/WIERD.PRM, which the published cheat
+// (hold L1+R2+Start+Select while loading) substitutes for the standard teams. The
+// executable calls this "silly ships" -- maybe_SillyShipsCheatEnabled (0x8009495c)
+// prints "silly ships activated!!!!!" when it engages.
+var AnimalTeamEntries = []TeamEntry{
+	{Name: "SNAIL", Object: "snail"},
+	{Name: "SLIME", Object: "slime"},
+	{Name: "SHARK", Object: "shark"},
+	{Name: "PIGG", Object: "pigg"},
+	{Name: "BUG", Object: "bug"},
+}
+
+// Teams returns whichever set is active. Nothing found in the game context gates
+// team availability, so the only variation is the animal substitution.
+func (c *GameContext) Teams() []TeamEntry {
+	if c != nil && c.AnimalTeams {
+		return AnimalTeamEntries
+	}
+	return TeamEntries
+}
+
+// ClassModels names the PRM whose single object is each class's menu model, indexed
+// by SpeedClass.
+var ClassModels = [4]struct{ File, Object string }{
+	{"VECTO.PRM", "vect"},
+	{"VENOM.PRM", "ven"},
+	{"RAPIE.PRM", "rap"},
+	{"PHANT.PRM", "phant"},
+}
+
+// TrackPreviewObjects names the object inside COMMON/JUNE.PRM that previews each
+// circuit, in menu order. Four of the eight are identifiable by name; the rest of
+// JUNE.PRM's objects are development names (upsildev5, alphadev3) that have not been
+// matched to circuits, so those entries are empty.
+var TrackPreviewObjects = [8]string{
+	"",              // Talon's Reach
+	"",              // Sagarmatha
+	"valparisso",    // Valparaiso
+	"",              // Phenitia Park
+	"",              // Gare d'Europa
+	"odessakeys",    // Odessa Keys
+	"vostok",        // Vostok Island
+	"spilskinanke",  // Spilskinanke
 }
