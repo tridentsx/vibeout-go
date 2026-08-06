@@ -532,3 +532,44 @@ Also reported and not yet investigated: the craft **starts moving on its own aft
 couple of seconds** with no input. Nothing in the measured run shows lateral drift, so
 this may be a separate defect in the horizontal axes rather than a consequence of the
 vertical oscillation.
+
+## Runtime session: what it confirmed and what it added
+
+A live DuckStation session (see `docs/duckstation-findings-rescue-craft.md`) set a write
+breakpoint on the craft's node translation. It agrees with the static analysis at the
+instruction level and adds two things static analysis could not reach.
+
+**Confirmed.** The write PC is `0x8001E094`, inside `maybe_SetNodeTranslation`, and `ra`
+is `0x800677C4` — exactly the return address of the `jal 0x8001e090` at `0x800677bc`
+inside `maybe_IntegrateMovingObjectPath`. Two independent methods, same answer.
+
+Also confirmed that `node + 0x40` **is** set through the standard helper rather than
+bypassed, which was one of the two possibilities worth distinguishing. The craft goes
+through the ordinary scene-graph update path.
+
+**Added.** The entity struct is at **`0x800be420`**, now named
+`maybe_MovingObjectState`. Static analysis had its layout but never its address, since
+it is only ever reached through `arg1`.
+
+The integrator's unidentified callee at `0x80025608` is `maybe_WrapAngleSigned`:
+`a &= 0xfff; return a < 0x801 ? a : a - 0x1000`. A core helper called from ten places,
+equivalent to the port's `game.Angle.Signed()`.
+
+**One detail to reconcile.** The session reports the waypoint walk following a NEXT
+pointer at `object + 0x4`, where `maybe_InitMovingObjectPath` walks `+0x8`. In a track
+section `+0x4` is Previous and `+0x8` is Next, so either there are two walks in different
+directions, or one of the two readings is off by four. Worth settling, since it decides
+which way along the track a path runs.
+
+**Flight altitude, as measured.** Y at departure is between −8385 and −9399, against
+−423 at one earlier sample during the sweep. Negative Y being up, the craft **climbs
+roughly 8000 units** as it leaves. X and Z at departure sit near −33000 and +60000, a
+long way from the start line at roughly (−34755, −36318), so it travels a considerable
+distance rather than fading out.
+
+**What the session could not get, and why it matters.** No sample landed inside the
+166-tick countdown window: the polling loop's round-trip latency meant every pause landed
+after the countdown had already reached zero. So the entire light-phase and release
+portion of the trajectory is unmeasured, and the six captured rows are all from the
+departure. Getting the rest needs a logging breakpoint that records without pausing,
+not a poll-and-sleep loop — which is a tooling question rather than an analysis one.
