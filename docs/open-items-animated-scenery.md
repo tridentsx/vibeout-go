@@ -331,3 +331,30 @@ its trackside camera bob, and the craft is observed to bob vertically in play. S
 function may well drive position as well as primitive colour, and the name is too
 narrow. Checking whether it writes the node translation is now the first thing to do
 rather than assuming, as was assumed here, that it is colour only.
+
+## Port bug: the player's ship bobs after landing
+
+Distinct from the maintenance craft, and observed in the port rather than retail: after
+the ship is released it oscillates vertically instead of settling.
+
+What is established:
+
+- The ship spawns at **+300** above the pad, from retail's own
+  `(normal * 0x4b) >> 0xa` with a 4096-scaled normal.
+- The surface spring's normal term reaches zero at **256**
+  (`trackSurfaceZeroNormalForceDistance`, from `16384/256 == 64`).
+
+So a 44-unit settle from 300 down to the 256 equilibrium is expected and correct. A
+*sustained* bob is not: it means the spring is returning to equilibrium without
+enough damping and overshooting each time, so energy is not being removed.
+
+Where to look: `IntegrateShipPhysicsAndTrackContact` around `0x80030e70`, which is
+where the 75-unit divisor floor (`trackSurfaceMinimumDistance`) comes from. The
+damping term that should sit alongside the spring has not been checked against the
+executable, and the port's version may be missing it or applying it at the wrong
+magnitude. Note the chase camera has a comparable pair -- a `/64` spring and a `/8`
+decay -- so the surface spring plausibly has its own decay divisor that was never
+ported.
+
+This is worth fixing before the maintenance craft: a visibly oscillating ship will
+make any craft animation impossible to judge.
