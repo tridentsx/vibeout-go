@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"path"
 	"time"
 
 	"github.com/Zyko0/go-sdl3/bin/binsdl"
@@ -166,6 +167,35 @@ func main() {
 	mapping := controller.DefaultMapping()
 	keys := keyboardState{}
 	last := time.Now()
+	// The screen-space layer and the top-level state machine. The state machine is
+	// ported from main (0x8001a464); see internal/game/state.go.
+	ui, err := gameRender.NewUI(device, loader, 1280, 720)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer ui.Destroy()
+	states := game.NewStateMachine()
+	// Boot splash textures, uploaded once. A missing file is not fatal: the state
+	// machine still holds for the retail duration, just on black.
+	splashTextures := make([]*sdl.GPUTexture, len(game.BootSplashes))
+	for i, splash := range game.BootSplashes {
+		dir, file := path.Split(splash.Texture)
+		img, imgErr := loader.LoadTIM(path.Clean(dir), file)
+		if imgErr != nil {
+			log.Printf("boot splash %s unavailable: %v", splash.Texture, imgErr)
+			continue
+		}
+		tex, texErr := device.NewTexture(img.Width, img.Height, img.Pixels)
+		if texErr != nil {
+			log.Printf("boot splash %s upload failed: %v", splash.Texture, texErr)
+			continue
+		}
+		splashTextures[i] = tex
+	}
+	// Start is edge-triggered: the state machine debounces, but a held key must not
+	// read as a fresh press on the next screen.
+	startPressed := false
+
 	accumulator := time.Duration(0)
 	physicsTicks := uint64(0)
 	// The PAL game presents 50 Hz fields, but advances its race/game state at
@@ -198,6 +228,10 @@ func main() {
 					if down && !key.Repeat {
 						camera.ToggleView(ship)
 					}
+				case sdl.SCANCODE_RETURN, sdl.SCANCODE_SPACE:
+					if down && !key.Repeat {
+						startPressed = true
+					}
 				}
 			}
 		}
@@ -213,6 +247,21 @@ func main() {
 			accumulator = 5 * tick
 		}
 		for accumulator >= tick {
+			// Advance the top-level state machine first: it decides whether this tick
+			// belongs to a race at all.
+			start := startPressed || pad.IsDown(controller.Accelerate)
+			states.Advance(start)
+			startPressed = false
+			if states.State() != game.StateRace {
+				// Nothing to simulate outside a race. The front end has no
+				// implementation yet, so treat it as an immediate back-out, which
+				// returns the machine to the title exactly as retail's return of 1 does.
+				if states.State() == game.StateFrontEnd {
+					states.FrontEndResult(game.RaceSetupBackToTitle)
+				}
+				accumulator -= tick
+				continue
+			}
 			accelerate := keys.accelerate || pad.IsDown(controller.Accelerate)
 			left := keys.left || pad.IsDown(controller.SteerLeft)
 			right := keys.right || pad.IsDown(controller.SteerRight)
@@ -274,11 +323,38 @@ func main() {
 			log.Printf("render: begin frame: %v", err)
 			return nil
 		}
-		trackRenderer.DrawSkyPerspective(frame, camera.Camera, 1280, 720)
-		trackRenderer.DrawPerspective(frame, camera.Camera, 1280, 720)
-		trackRenderer.DrawSceneryPerspectiveAnimated(frame, camera.Camera, 1280, 720, sceneryAnim)
-		if camera.View == gameRender.CameraExternal {
-			gameRender.DrawShipPerspective(frame, camera.Camera, ship, craft, craftTextures, craftModel.Pages, 1280, 720)
+		switch states.State() {
+		case game.StateBootSplash:
+			ui.FillScreen(frame, sdl.FColor{A: 1})
+			if i := states.SplashIndex(); i >= 0 && splashTextures[i] != nil {
+				ui.DrawFullscreenImage(frame, splashTextures[i])
+			}
+		case game.StateBootOverlay, game.StatePostRaceOverlay:
+			// Overlays are separate PS-EXEs running FMV, which a port cannot execute.
+			// Show the name on black until video playback exists.
+			ui.FillScreen(frame, sdl.FColor{A: 1})
+			if overlay, ok := states.CurrentOverlay(); ok {
+				ui.DrawTextCentered(frame, overlay.Name, gameRender.RetailWidth/2, 110, gameRender.White)
+				ui.DrawTextCentered(frame, "[OVERLAY PLACEHOLDER]", gameRender.RetailWidth/2, 126,
+					sdl.FColor{R: 0.5, G: 0.5, B: 0.5, A: 1})
+			}
+		case game.StateTitleAttract:
+			ui.FillScreen(frame, sdl.FColor{A: 1})
+			// Retail draws this at (0xa0, 0xe4) and blinks it 18 ticks in every 25.
+			if game.PressStartVisible(states.Tick()) {
+				ui.DrawTextCentered(frame, "PRESS START", 0xa0, 0xe4, gameRender.White)
+			}
+			ui.DrawTextCentered(frame, "WIPEOUT 2097", gameRender.RetailWidth/2, 100, gameRender.White)
+		default:
+			trackRenderer.DrawSkyPerspective(frame, camera.Camera, 1280, 720)
+			trackRenderer.DrawPerspective(frame, camera.Camera, 1280, 720)
+			trackRenderer.DrawSceneryPerspectiveAnimated(frame, camera.Camera, 1280, 720, sceneryAnim)
+			if camera.View == gameRender.CameraExternal {
+				gameRender.DrawShipPerspective(frame, camera.Camera, ship, craft, craftTextures, craftModel.Pages, 1280, 720)
+			}
+			if states.IsDemo() {
+				ui.DrawTextCentered(frame, "DEMO MODE", gameRender.RetailWidth/2, 20, gameRender.White)
+			}
 		}
 		if err := device.Present(frame); err != nil {
 			log.Printf("render: present: %v", err)

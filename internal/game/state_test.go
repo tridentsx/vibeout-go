@@ -30,6 +30,14 @@ func TestBootSequenceReachesTheTitle(t *testing.T) {
 	if seen[1] != "TEXTURES/COPY2097.TIM" {
 		t.Errorf("second splash is %q, want the copyright screen", seen[1])
 	}
+	// The wait follows the load it belongs to, and VSync counts 50 Hz fields while
+	// the state machine ticks at 25 Hz.
+	if BootSplashes[0].HoldVSyncs != 240 {
+		t.Errorf("warning.tim holds %d fields, want 240", BootSplashes[0].HoldVSyncs)
+	}
+	if got := BootSplashes[0].HoldTicks(); got != 120 {
+		t.Errorf("240 fields is %d ticks, want 120", got)
+	}
 }
 
 // The boot overlay is palanim, and it must be reported so a placeholder can name
@@ -295,5 +303,30 @@ func TestOverlayFlagArraysMatchTheTable(t *testing.T) {
 	if len(PostRaceOverlays) != postRaceOverlayCount {
 		t.Fatalf("postRaceOverlayCount is %d but the table has %d entries",
 			postRaceOverlayCount, len(PostRaceOverlays))
+	}
+}
+
+// SplashIndex lets a caller index a parallel texture array, and must be -1 once the
+// sequence is over so nothing indexes out of range.
+func TestSplashIndexTracksTheSequence(t *testing.T) {
+	m := NewStateMachine()
+	if m.SplashIndex() != 0 {
+		t.Fatalf("starts at index %d, want 0", m.SplashIndex())
+	}
+	highest := 0
+	for i := 0; i < 10000 && m.State() == StateBootSplash; i++ {
+		if idx := m.SplashIndex(); idx > highest {
+			highest = idx
+		}
+		if idx := m.SplashIndex(); idx >= len(BootSplashes) {
+			t.Fatalf("index %d out of range", idx)
+		}
+		m.Advance(false)
+	}
+	if highest != len(BootSplashes)-1 {
+		t.Errorf("highest index reached was %d, want %d", highest, len(BootSplashes)-1)
+	}
+	if m.SplashIndex() != -1 {
+		t.Errorf("index is %d after the sequence, want -1", m.SplashIndex())
 	}
 }

@@ -52,20 +52,26 @@ func (s TopLevelState) String() string {
 	return fmt.Sprintf("state(%d)", int(s))
 }
 
-// BootSplash is one entry of the boot TIM sequence. Retail loads each with
-// LoadTIMTexture and then spins on VSync for HoldTicks.
+// BootSplash is one entry of the boot TIM sequence. Retail loads each image and
+// then spins on VSync, so the wait *follows* the load it belongs to.
 type BootSplash struct {
-	Texture   string
-	HoldTicks int
+	Texture string
+	// HoldVSyncs is the retail loop bound, in 50 Hz PAL fields.
+	HoldVSyncs int
 }
 
-// BootSplashes is the sequence main runs before any loop. The hold counts are the
-// literal VSync loop bounds: 0xf0, 0x32, 0x32, 0x64.
+// HoldTicks converts the retail field count to game ticks. VSync counts fields at
+// 50 Hz while the game state advances at 25 Hz, so a 240-field wait is 120 ticks
+// (4.8 seconds), not 240.
+func (b BootSplash) HoldTicks() int { return b.HoldVSyncs / 2 }
+
+// BootSplashes is the sequence main runs before any loop, with the literal VSync
+// loop bounds that follow each load: 0xf0, 0x32, 0x32, 0x64.
 var BootSplashes = []BootSplash{
-	{Texture: "TEXTURES/WARNING.TIM", HoldTicks: 0},
-	{Texture: "TEXTURES/COPY2097.TIM", HoldTicks: 240},
-	{Texture: "TEXTURES/DOLBYPAL.TIM", HoldTicks: 50},
-	{Texture: "TEXTURES/REDBPAL.TIM", HoldTicks: 50},
+	{Texture: "TEXTURES/WARNING.TIM", HoldVSyncs: 240},
+	{Texture: "TEXTURES/COPY2097.TIM", HoldVSyncs: 50},
+	{Texture: "TEXTURES/DOLBYPAL.TIM", HoldVSyncs: 50},
+	{Texture: "TEXTURES/REDBPAL.TIM", HoldVSyncs: 100},
 }
 
 // TitleTexture is loaded when the title screen is (re)entered.
@@ -328,6 +334,15 @@ func (m *StateMachine) Tick() int { return m.tick }
 // which retail enters by letting the title screen time out.
 func (m *StateMachine) IsDemo() bool { return m.demo }
 
+// SplashIndex is which entry of BootSplashes is showing, so a caller can index a
+// parallel array of uploaded textures. It is -1 outside StateBootSplash.
+func (m *StateMachine) SplashIndex() int {
+	if m.state != StateBootSplash || m.splash >= len(BootSplashes) {
+		return -1
+	}
+	return m.splash
+}
+
 // CurrentSplash returns the splash being shown, valid in StateBootSplash.
 func (m *StateMachine) CurrentSplash() (BootSplash, bool) {
 	if m.state != StateBootSplash || m.splash >= len(BootSplashes) {
@@ -373,7 +388,7 @@ func (m *StateMachine) Advance(pressStart bool) {
 	m.tick++
 	switch m.state {
 	case StateBootSplash:
-		if m.splash < len(BootSplashes) && m.tick >= BootSplashes[m.splash].HoldTicks {
+		if m.splash < len(BootSplashes) && m.tick >= BootSplashes[m.splash].HoldTicks() {
 			m.splash++
 			m.tick = 0
 			if m.splash >= len(BootSplashes) {
