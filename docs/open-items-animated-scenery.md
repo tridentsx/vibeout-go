@@ -219,16 +219,22 @@ road that term is `4096 * 75 / 1024` = **300 world units** of clearance, not a f
 Measured on TRACK01 slot 14: pad vertices at Y 500, normal Y -4096, ship Y 200.
 
 So the descent **is** simulated. The ship starts hovering 300 up with no velocity,
-and gravity lowers it onto the pad while the countdown runs. The maintenance craft
-is animated to match that fall, which is why it reads as the droid carrying the ship
-down and releasing it. The port already reproduces the ship's half of this, because
-it uses the same placement formula and runs the same physics; what is missing is only
-the craft model and its path.
+and gravity lowers it onto the pad while the countdown runs. The port already
+reproduces this, because it uses the same placement formula and runs the same
+physics.
 
-That path remains unlocated. `maybe_AnimateRescueCraftGlow` (`0x80048d08`) is the
-only reader of the craft's object pointer and it only rewrites primitive colours.
-Whatever positions it should be recoverable by looking for writes to its node, and
-its vertical track ought to match the ship's fall from +300 to 0 over the countdown.
+The maintenance craft does **not** descend with it. Observed behaviour: the craft
+holds a position above the pad, the ship drops away from it, and only then does the
+craft fly off. So its animation is three phases -- a stationary hover above the
+ship's spawn point, a release, and a departure -- rather than a carried descent.
+That means its height is independent of the ship's fall and sits somewhere above
++300, and the release is presumably timed against the countdown at ship`+0xe0`
+rather than against the ship's position.
+
+The path remains unlocated. `maybe_AnimateRescueCraftGlow` (`0x80048d08`) is the only
+reader of the craft's object pointer and it only rewrites primitive colours, so
+whatever sets its node translation is elsewhere. The departure is the most findable
+part: it should be a per-tick position update gated on the countdown value.
 
 ## Correction
 
