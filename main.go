@@ -175,6 +175,7 @@ func main() {
 	}
 	defer ui.Destroy()
 	states := game.NewStateMachine()
+	menu := game.NewMenuCursor()
 	// Boot splash textures, uploaded once. A missing file is not fatal: the state
 	// machine still holds for the retail duration, just on black.
 	type splashImage struct {
@@ -216,6 +217,10 @@ func main() {
 	// Start is edge-triggered: the state machine debounces, but a held key must not
 	// read as a fresh press on the next screen.
 	startPressed := false
+	// Menu input, also edge-triggered so a held key steps one row.
+	menuMove := 0
+	menuActivate := false
+	menuBack := false
 	// lastSplash holds the most recent splash actually drawn, so a slot whose image
 	// is absent from the disc keeps the previous screen rather than flashing black.
 	var lastSplashTex *sdl.GPUTexture
@@ -240,7 +245,12 @@ func main() {
 				down := event.Type == sdl.EVENT_KEY_DOWN
 				switch key.Scancode {
 				case sdl.SCANCODE_W, sdl.SCANCODE_UP:
+					// Up doubles as accelerate in a race and menu-up in the front end;
+					// the two states never read it at the same time.
 					keys.accelerate = down
+					if down && !key.Repeat {
+						menuMove--
+					}
 				case sdl.SCANCODE_LEFT:
 					keys.left = down
 				case sdl.SCANCODE_RIGHT:
@@ -256,6 +266,15 @@ func main() {
 				case sdl.SCANCODE_RETURN, sdl.SCANCODE_SPACE:
 					if down && !key.Repeat {
 						startPressed = true
+						menuActivate = true
+					}
+				case sdl.SCANCODE_ESCAPE, sdl.SCANCODE_BACKSPACE:
+					if down && !key.Repeat {
+						menuBack = true
+					}
+				case sdl.SCANCODE_DOWN:
+					if down && !key.Repeat {
+						menuMove++
 					}
 				}
 			}
@@ -282,8 +301,25 @@ func main() {
 				// implementation yet, so treat it as an immediate back-out, which
 				// returns the machine to the title exactly as retail's return of 1 does.
 				if states.State() == game.StateFrontEnd {
-					states.FrontEndResult(game.RaceSetupBackToTitle)
+					if menuMove != 0 {
+						menu.Move(menuMove, &states.Context)
+					}
+					if menuBack && !menu.Back() {
+						// Backing out of the main screen leaves the front end, which is
+						// what retail's return of 1 means.
+						states.FrontEndResult(game.RaceSetupBackToTitle)
+					}
+					if menuActivate {
+						if menu.Activate(&states.Context) == game.ActionStartRace {
+							states.Context.Normalise(gameRender.MenuIndexToTrackID[:])
+							log.Printf("start: track %s (id %d), class %d",
+								game.TrackMenuEntries[states.Context.MenuTrackIndex].Name,
+								states.Context.TrackID, states.Context.SpeedClass)
+							states.FrontEndResult(int(states.Context.TrackID))
+						}
+					}
 				}
+				menuMove, menuActivate, menuBack = 0, false, false
 				accumulator -= tick
 				continue
 			}
@@ -368,6 +404,10 @@ func main() {
 			if overlay, ok := states.CurrentOverlay(); ok {
 				ui.DrawTextCentered(frame, overlay.BaseName(), gameRender.RetailWidth/2, 0xe4, gameRender.White)
 			}
+		case game.StateFrontEnd:
+			ui.FillScreen(frame, sdl.FColor{A: 1})
+			ui.DrawSplash(frame, titleTex, titleW, titleH)
+			drawMenu(ui, frame, menu, &states.Context)
 		case game.StateTitleAttract:
 			ui.FillScreen(frame, sdl.FColor{A: 1})
 			ui.DrawSplash(frame, titleTex, titleW, titleH)
@@ -398,6 +438,67 @@ func main() {
 		}
 		return nil
 	})
+}
+
+// drawMenu renders the current front end screen. Retail's own layout is a 3D
+// carousel of models; this is a text stand-in with the real labels, so navigation
+// and selection can be exercised before the models exist.
+func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor, ctx *game.GameContext) {
+	const (
+		titleY   = 24
+		firstY   = 56
+		rowPitch = 14
+	)
+	screen := menu.Screen()
+	ui.DrawTextCentered(frame, game.Screens[screen].Title, gameRender.RetailWidth/2, titleY, gameRender.White)
+
+	selected := menu.Selection()
+	dim := sdl.FColor{R: 0.55, G: 0.55, B: 0.6, A: 1}
+
+	if screen == game.ScreenTrack {
+		count := ctx.SelectableTrackCount()
+		for i := 0; i < count && i < len(game.TrackMenuEntries); i++ {
+			entry := game.TrackMenuEntries[i]
+			colour := dim
+			if i == selected {
+				colour = gameRender.White
+			}
+			ui.DrawText(frame, entry.Name, 40, firstY+i*rowPitch, colour)
+			ui.DrawText(frame, entry.Rating, 220, firstY+i*rowPitch, colour)
+		}
+		// Retail shows the highlighted circuit's description at the foot of the screen.
+		if selected < len(game.TrackMenuEntries) {
+			ui.DrawTextCentered(frame, game.TrackMenuEntries[selected].Description,
+				gameRender.RetailWidth/2, 200, dim)
+		}
+		return
+	}
+
+	items := game.Screens[screen].Items
+	if len(items) == 0 {
+		ui.DrawTextCentered(frame, "NOT IMPLEMENTED", gameRender.RetailWidth/2, firstY+rowPitch, dim)
+		return
+	}
+	for i, item := range items {
+		colour := dim
+		if i == selected {
+			colour = gameRender.White
+		}
+		ui.DrawTextCentered(frame, item.Label, gameRender.RetailWidth/2, firstY+i*rowPitch, colour)
+	}
+	// Show the live selections on the main screen, which is where retail displays
+	// them beside the items.
+	if screen == game.ScreenMain {
+		track := "?"
+		if int(ctx.MenuTrackIndex) < len(game.TrackMenuEntries) {
+			track = game.TrackMenuEntries[ctx.MenuTrackIndex].Name
+		}
+		class := "?"
+		if int(ctx.SpeedClass) < len(game.Screens[game.ScreenClass].Items) {
+			class = game.Screens[game.ScreenClass].Items[ctx.SpeedClass].Label
+		}
+		ui.DrawTextCentered(frame, track+"  -  "+class, gameRender.RetailWidth/2, 196, dim)
+	}
 }
 
 func vectorDot(a, b game.Vector3) float32 { return a.X*b.X + a.Y*b.Y + a.Z*b.Z }
