@@ -22,13 +22,12 @@ func TestPlaceShipOnStartingGrid(t *testing.T) {
 			{Next: 0, X: 1000},
 		},
 	}
-	// Even slots advance to the second flagged face, which here is the one carrying a
-	// normal, so the craft is lifted by normal * 75/1024.
+	// An even slot takes the section's first face carrying flag 0x01, with no advance.
 	ship := &Ship{}
 	if err := PlaceShipOnStartingGrid(ship, track, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	if ship.Position != (Vector3{X: 200, Y: 700, Z: 200}) {
+	if ship.Position != (Vector3{X: 100, Y: 1000, Z: 200}) {
 		t.Fatalf("even-slot position = %+v", ship.Position)
 	}
 	if ship.SectionID != 0 || ship.Yaw != 3072 {
@@ -40,7 +39,7 @@ func TestPlaceShipOnStartingGrid(t *testing.T) {
 	if err := PlaceShipOnStartingGrid(odd, track, 0, 1); err != nil {
 		t.Fatal(err)
 	}
-	if odd.Position != (Vector3{X: 100, Y: 1000, Z: 200}) {
+	if odd.Position != (Vector3{X: 200, Y: 700, Z: 200}) {
 		t.Fatalf("odd-slot position = %+v", odd.Position)
 	}
 	if odd.Position.X == ship.Position.X {
@@ -61,7 +60,7 @@ func TestStartingGridLaneParity(t *testing.T) {
 	section := assets.TrackSection{FirstFace: 0, NumFaces: 2}
 	for _, tc := range []struct {
 		slot, want int
-	}{{0, 1}, {1, 0}, {2, 1}, {3, 0}, {14, 1}} {
+	}{{0, 0}, {1, 1}, {2, 0}, {3, 1}, {13, 1}, {14, 0}} {
 		index, err := startingGridFace(faces, section, tc.slot)
 		if err != nil || index != tc.want {
 			t.Errorf("slot %d: index/error = %d/%v, want %d/nil", tc.slot, index, err, tc.want)
@@ -71,9 +70,11 @@ func TestStartingGridLaneParity(t *testing.T) {
 
 // A single race starts the player in the last grid slot; other modes resolve the
 // slot from qualifying or standings instead.
-func TestPlayerGridSlotIsTheLastOne(t *testing.T) {
-	if got := PlayerGridSlot(15); got != 14 {
-		t.Errorf("PlayerGridSlot(15) = %d, want 14", got)
+func TestPlayerGridSlotIsOneShortOfTheBack(t *testing.T) {
+	// The compaction loop skips both human pilot entries but a single race places only
+	// one back, so the counter stops at 13 and position 14 goes unused.
+	if got := PlayerGridSlot(15); got != 13 {
+		t.Errorf("PlayerGridSlot(15) = %d, want 13", got)
 	}
 	if got := PlayerGridSlot(1); got != 0 {
 		t.Errorf("PlayerGridSlot(1) = %d, want 0", got)

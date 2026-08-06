@@ -860,6 +860,61 @@ line, and painted pads plausibly only exist near the front of that. If so, a cra
 last slot standing on plain road is correct rather than misplaced -- which is worth
 confirming by looking at where the pads actually are in retail before treating it as a bug.
 
+## Resolved: the starting lane, read at instruction level
+
+The grid placement is settled, and the parity was never the fault. All three pieces of
+`InitializeRaceShipsAndStartingGrid` were read instruction by instruction.
+
+**The section walk** (0x80022d40) confirms two `Previous` steps per slot, so the grid really
+is thirty sections long and 2097 differs from the reference here:
+
+```
+a3 = Previous(startLine)
+loop s2 = 0..14:
+    sections[s2] = a3        ; sp+56 + s2*4
+    a3 = Previous(a3); a3 = Previous(a3)
+    side[s2] = a0            ; sp+120 + s2, a byte
+    a0 ^= 1                  ; toggles after the store, from a0 = 0
+```
+
+**The face scan** (0x80023960) confirms the parity as originally read. The delay slot is
+worth noting because it is easy to miscount:
+
+```
+scan: v0 = a3[15] & 1
+      if (v0 == 0) { a3 += 20; goto scan }   ; the delay slot runs on every pass,
+                                             ; so a3 exits one PAST the match
+      a3 -= 20                               ; delay slot, always -> back to the match
+      if (side[gridPosition] != 0) a3 += 20  ; only an odd slot advances
+```
+
+**The permutation** (0x80022f20, 0x80022fcc) is where the error was:
+
+```
+t2 = (gp[162] == 0) ? 4 : 5
+for pass = 0..2: perm[pass*t2 .. +4] = {2,5,8,11,14} - pass
+count = t2*3
+for s2 = 0..count-1:
+    v = perm[s2]
+    if (v == pilot1 || v == pilot2) continue   ; BOTH, with no mode test
+    gridPosition[v] = a0++                     ; indexed by pilot, holds the position
+if (mode == 2) gridPosition[pilot1] = a0++     ; a single race places only one back
+```
+
+The loop skips **both** human pilot entries unconditionally, but a single race places only
+one of them afterwards. So the counter reaches **13**, not 14, and grid position 14 is
+assigned to nobody. The player takes slot 13.
+
+Two compounding mistakes had hidden this. The slot was read as 14, and the face dump was
+read at **vertex 0** rather than at the face centre -- the position is `midpoint(v0, v2)`.
+Section 265's flagged faces have centres 841 units *left* and 855 *right* of the section
+centre, not "centre and right" as the vertex offsets suggested. So slot 14 being even put
+the craft in the left lane, and inverting the parity forced it right for the wrong reason.
+
+With the slot corrected the parity is faithful again and the result follows: slot 13 is odd,
+advances, and lands 870 units right of section 267's centre. A test asserts that sign
+against real track data so it cannot regress silently.
+
 ## On the reference implementation, and why it was not adopted
 
 phoboslab's wipeout-rewrite places the grid differently: it walks to `start_line_pos - 15`

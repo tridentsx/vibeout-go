@@ -75,8 +75,22 @@ const gridSlotSectionStride = 2
 // PlayerGridSlot is the slot the player's craft starts in, given how many slots
 // the track's grid holds.
 //
-// In a single race the player starts in the **last** slot and works forward
-// through the field. The other modes do not: championship and challenge assign
+// In a single race the player starts at `slots - 2`, one short of the back of the grid.
+// That falls out of how InitializeRaceShipsAndStartingGrid compacts its permutation
+// (0x80022fcc, read instruction by instruction):
+//
+//	for (s2 = 0; s2 < count; s2++) {
+//	    v = perm[s2];
+//	    if (v == pilot1 || v == pilot2) continue;   // both, unconditionally
+//	    gridPosition[v] = a0++;
+//	}
+//	if (mode == 2) gridPosition[pilot1] = a0++;     // single player: one placed back
+//
+// The loop skips *both* human pilot entries with no test on the race mode, but a single
+// race places only one of them afterwards. So with a fifteen-entry permutation the loop
+// assigns 0..12, the counter reaches 13, and the player takes 13. Position 14 goes to
+// nobody. Reading the loop as skipping one entry gave 14, and 14 is even, which put the
+// craft in the left-hand lane -- the wrong side, as seen in play. The other modes do not: championship and challenge assign
 // grid order from qualifying or from standings carried between races, which is
 // what maybe_ShuffleRaceOrder (called from main) and
 // maybe_AdvanceShuffledRaceOrderStep (called from maybe_ResetRaceCountdown)
@@ -91,7 +105,10 @@ func PlayerGridSlot(slots int) int {
 	if slots <= 0 {
 		return 0
 	}
-	return slots - 1
+	if slots == 1 {
+		return 0
+	}
+	return slots - 2
 }
 
 // PlaceShipOnStartingGrid ports the position/orientation portion of
@@ -171,28 +188,28 @@ func startingGridFace(faces []assets.TrackFace, section assets.TrackSection, gri
 		//	face -= 0x14;
 		//	if (sideFlag[slot] != 0) face += 0x14;
 		//
-		// The side flag is built in the slot loop as `flag[i] = a0; a0 ^= 1` from
-		// a0 = 0, so on a plain reading even slots take the first flagged face.
+		// The side flag and the face scan, both read at instruction level:
 		//
-		// The geometry says which face is which. Every TRACK01 section has four:
+		//	side[s2] = a0; a0 ^= 1        ; 0x80023984, byte array at sp+120, a0 starts 0
+		//	...
+		//	scan: v0 = a3[15] & 1
+		//	      if (v0 == 0) { a3 += 20; goto scan }   ; the delay slot runs every pass,
+		//	                                            ; so a3 exits one PAST the match
+		//	      a3 -= 20                              ; delay slot, always -> the match
+		//	      if (side[gridPosition] != 0) a3 += 20 ; only an odd slot advances
 		//
-		//	face 0  flags 0x00  lateral offset -1750   outside left
-		//	face 1  flags 0x01  lateral offset     0   centre
-		//	face 2  flags 0x05  lateral offset +1750   right
-		//	face 3  flags 0x04  lateral offset +2250   outside right
+		// So an even slot takes the flagged face and an odd slot the one after it, which is
+		// what this originally did. On TRACK01 section 265 the two flagged faces have
+		// centres 841 units left and 855 right of the section centre, and +X is to the
+		// right, so an odd slot is the right-hand lane. With the player at slot 13 that is
+		// where it belongs.
 		//
-		// Two carry bit 0x01, at the centre and 1750 to the right, and the ship's Right
-		// vector at the spawn is (0.98, 0, -0.20), so +X is to the right. Retail starts
-		// the player on the right, and taking the first flagged face puts it in the
-		// centre, so the player's slot must advance.
-		//
-		// This inverts the parity a second time, which is uncomfortable, and the honest
-		// reading is that the parity is not what is in doubt: the slot is.
-		// gridPosition[0] = 14 was derived by hand from HLIL that splits the permutation
-		// across several stack variables, and if the true slot is odd then the plain
-		// parity was right all along. Until that permutation is re-read at the
-		// instruction level, this matches what is on screen.
-		if gridSlot&1 == 0 {
+		// This was briefly inverted to force the right-hand lane while the slot was still
+		// believed to be 14. Inverting it was the wrong repair: the parity is faithful and
+		// the slot was wrong. Note also that the face *centre* is what matters here, not
+		// vertex 0 -- the position is midpoint(v0, v2), and reading vertex 0 offsets made
+		// the flagged faces look like "centre and right" rather than "left and right".
+		if gridSlot&1 != 0 {
 			index++
 		}
 		if index >= end {
