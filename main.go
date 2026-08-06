@@ -500,6 +500,16 @@ func main() {
 			if mover != nil {
 				mover.Advance(pathfinder, ship)
 				craftGlow.Tick()
+				// Log the craft against the ship and camera once a second, so an
+				// invisible craft can be told apart from a misplaced one.
+				if physicsTicks%25 == 0 {
+					log.Printf("craft timer=%3d state=%d pos=(%.0f,%.0f,%.0f) offsetFromShip=(%.0f,%.0f,%.0f) camera=(%.0f,%.0f,%.0f)",
+						mover.Timer, mover.State,
+						mover.Position.X, mover.Position.Y, mover.Position.Z,
+						mover.Position.X-ship.Position.X, mover.Position.Y-ship.Position.Y,
+						mover.Position.Z-ship.Position.Z,
+						camera.Position.X, camera.Position.Y, camera.Position.Z)
+				}
 			}
 			if nowPlayingTicks > 0 {
 				nowPlayingTicks--
