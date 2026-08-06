@@ -348,6 +348,7 @@ func main() {
 			log.Printf("render: begin frame: %v", err)
 			return nil
 		}
+		ui.BeginFrame()
 		switch states.State() {
 		case game.StateBootSplash:
 			ui.FillScreen(frame, sdl.FColor{A: 1})

@@ -20,8 +20,11 @@ import (
 const (
 	// RetailWidth and RetailHeight are the framebuffer retail drew into. The
 	// executable's draw calls use these coordinates directly.
-	RetailWidth  = 320
-	RetailHeight = 240
+	RetailWidth = 320
+	// RetailHeight is 256 because this is the PAL build: every boot splash TIM is
+	// 320x256 (WARNING.TIM is 640x256), and retail's draw coordinates are in that
+	// frame. Using 240 cropped 16 rows off the bottom and shifted everything.
+	RetailHeight = 256
 
 )
 
@@ -37,6 +40,39 @@ type UI struct {
 	white  *sdl.GPUTexture
 	width  float32
 	height float32
+	// layer increments per draw within a frame. Present issues one draw call per
+	// texture and iterates a Go map, so draw order between textures is randomised;
+	// with depth writes and a LESS compare, two UI quads at the same depth would
+	// swap priority every frame. That is what made the splash screens flicker
+	// between the image and the black fill beneath them. Giving each successive draw
+	// a nearer depth makes the result independent of iteration order.
+	layer int
+}
+
+// uiLayerBase and uiLayerStep space UI draws in camera-space Z. Later draws get a
+// smaller Z, hence a smaller depth, hence priority under the LESS compare. The span
+// stays just above the near plane so the whole UI still sits in front of the 3D pass.
+const (
+	uiLayerBase = 64
+	uiLayerStep = 2
+	uiMaxLayers = uiLayerBase / uiLayerStep
+)
+
+// BeginFrame resets the layer counter. Call it once per frame before drawing.
+func (u *UI) BeginFrame() {
+	if u != nil {
+		u.layer = 0
+	}
+}
+
+// nextDepth returns the camera-space Z for the next draw and advances the layer.
+func (u *UI) nextDepth() float32 {
+	remaining := uiMaxLayers - u.layer
+	if remaining < 0 {
+		remaining = 0
+	}
+	u.layer++
+	return depthNear + float32(remaining*uiLayerStep)
 }
 
 // NewUI loads the font atlas and builds the helper texture. The font is
@@ -95,11 +131,7 @@ func (u *UI) quad(f *Frame, tex *sdl.GPUTexture, dstX, dstY, dstW, dstH float32,
 	// and emits vec4(x*z, y*z, depth*z, z) so the GPU's perspective divide recovers
 	// the screen position. Passing 0 makes that vec4(0,0,0,0) and nothing renders at
 	// all -- which is exactly what happened first: a black screen.
-	//
-	// Sitting exactly on the near plane gives depth = (z-near)/(far-near) = 0, the
-	// nearest value, so the UI passes the LESS test against the 1.0 depth clear and
-	// draws over everything the 3D pass emitted.
-	const z = depthNear
+	z := u.nextDepth()
 	tl := Vertex{X: x0, Y: y0, Z: z, U: u0, V: v0, R: col.R, G: col.G, B: col.B, A: col.A}
 	tr := Vertex{X: x1, Y: y0, Z: z, U: u1, V: v0, R: col.R, G: col.G, B: col.B, A: col.A}
 	bl := Vertex{X: x0, Y: y1, Z: z, U: u0, V: v1, R: col.R, G: col.G, B: col.B, A: col.A}
@@ -151,26 +183,17 @@ func (u *UI) DrawFullscreenImage(f *Frame, tex *sdl.GPUTexture) {
 	u.DrawImage(f, tex, 0, 0, RetailWidth, RetailHeight, White)
 }
 
-// DrawSplash fills the framebuffer from a boot TIM, taking only the leftmost
-// retail-sized region when the image is wider.
+// DrawSplash fills the framebuffer from a boot TIM, stretching the whole image.
 //
-// WARNING.TIM is 640x256 where COPY2097.TIM, REDBPAL.TIM and STARTPAL.TIM are all
-// 320x256, the PAL framebuffer size. Stretching the wide one across the screen would
-// squeeze two half-images together, so it is cropped instead. What the right-hand
-// half of that image is for has not been established -- a second language or region
-// variant is the obvious guess, but it is only a guess.
+// An earlier version cropped anything larger than the retail frame to its top-left
+// corner, which put every splash off-centre and cut 16 rows off the bottom of the
+// 320x256 ones. WARNING.TIM being 640x256 is not two side-by-side images: that is
+// the PS1's high-resolution mode, which outputs 640 horizontal pixels across the
+// same physical screen width, so stretching it to the frame is correct rather than a
+// distortion.
 func (u *UI) DrawSplash(f *Frame, tex *sdl.GPUTexture, texW, texH int) {
 	if tex == nil || texW <= 0 || texH <= 0 {
 		return
 	}
-	srcW := float32(texW)
-	if texW > RetailWidth {
-		srcW = RetailWidth
-	}
-	srcH := float32(texH)
-	if texH > RetailHeight {
-		srcH = RetailHeight
-	}
-	u.quad(f, tex, 0, 0, RetailWidth, RetailHeight,
-		0, 0, srcW, srcH, float32(texW), float32(texH), White)
+	u.DrawFullscreenImage(f, tex)
 }
