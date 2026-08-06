@@ -389,3 +389,41 @@ blinking rear lights.
 
 This is enough to render the craft correctly once it can be positioned. The motion
 remains the only missing piece, and the eliminated candidates are listed above.
+
+## Static search for the craft's mover: exhausted
+
+Tracing from the asset to whatever manipulates it is the right instinct, and it is what
+was tried. The chain is: `maybe_TrackPropPool` (`0x800a50e0`) slot `0x1e` holds the
+object pointer at `maybe_RescueCraftObject` (`0x800a5158`); the object's node is
+`*(obj + 0x30)`; the node's translation is at `+0x14`, `+0x18`, `+0x1c` with `+0x40`
+set to 1, as `maybe_SetNodeTranslation` (`0x8001e090`) shows.
+
+Every static route from there has been followed and none reaches it:
+
+| approach | result |
+|---|---|
+| code references to `0x800a5158` | one, `maybe_AnimateRescueCraftGlow`, colour only |
+| all 40 callers of `maybe_SetNodeTranslation` | none passes the craft's node |
+| functions receiving the whole pool (`maybe_DrawTrackBarrierMesh`, `maybe_DispatchShipDrawFunction`, `InitRaceCameraFromShip`) | none indexes slot `0x1e`; an apparent offset-120 access was a `$sp` frame save |
+| the countdown gate globals | read only by the lights and the gantry |
+| every animator called from `maybe_UpdatePerTrackAnimatedObjects` | all accounted for, none is the craft |
+| inline writes of the `+0x14`/`+0x18` translation pair | 139 functions, since offset 20 is common to many structs -- not selective enough to use |
+
+The structural reason this is hard: the node is parented into the scene tree at
+`g_800bde0c`, and the pool is indexable, so anything reaching the craft through a tree
+walk or a computed index leaves no reference to either the object pointer or the slot.
+
+## What would settle it
+
+A watchpoint, using the PCSX-Redux GDB connection the plugin already provides. With the
+game paused while the craft is on screen:
+
+1. read `*0x800a5158` for the object address
+2. read `*(object + 0x30)` for its node
+3. watch `node + 0x14` for writes
+4. resume; the watchpoint fires inside whatever moves it
+
+That is decisive where the static search is not, because it observes the write rather
+than trying to predict which code performs it. It needs the emulator running at that
+moment, so it is the next step to take together rather than something to derive from
+the binary alone.
