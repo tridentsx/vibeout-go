@@ -265,12 +265,26 @@ func main() {
 					}
 				case sdl.SCANCODE_RETURN, sdl.SCANCODE_SPACE:
 					if down && !key.Repeat {
-						startPressed = true
-						menuActivate = true
+						// One press must not both leave the title and activate the first
+						// menu row, so only count it as an activation when the front end
+						// is already open.
+						if states.State() == game.StateFrontEnd {
+							menuActivate = true
+						} else {
+							startPressed = true
+						}
 					}
 				case sdl.SCANCODE_ESCAPE, sdl.SCANCODE_BACKSPACE:
 					if down && !key.Repeat {
-						menuBack = true
+						// In a race this stands in for finishing it. Without it a race was
+						// terminal -- RaceFinished was never called from anywhere -- so
+						// once the title timed out into a demo there was no way back to
+						// the menu at all.
+						if states.State() == game.StateRace {
+							states.RaceFinished()
+						} else {
+							menuBack = true
+						}
 					}
 				case sdl.SCANCODE_DOWN:
 					if down && !key.Repeat {
@@ -415,6 +429,8 @@ func main() {
 			if game.PressStartVisible(states.Tick()) {
 				ui.DrawTextCentered(frame, "PRESS START", 0xa0, 0xe4, gameRender.White)
 			}
+			ui.DrawTextCentered(frame, "ENTER", gameRender.RetailWidth/2, 236,
+				sdl.FColor{R: 0.4, G: 0.4, B: 0.45, A: 1})
 		default:
 			trackRenderer.DrawSkyPerspective(frame, camera.Camera, 1280, 720)
 			trackRenderer.DrawPerspective(frame, camera.Camera, 1280, 720)
@@ -473,6 +489,9 @@ func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
 		}
 		return
 	}
+
+	ui.DrawTextCentered(frame, "UP DOWN SELECT-ENTER BACK-ESC", gameRender.RetailWidth/2, 236,
+		sdl.FColor{R: 0.4, G: 0.4, B: 0.45, A: 1})
 
 	items := game.Screens[screen].Items
 	if len(items) == 0 {
