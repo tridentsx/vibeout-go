@@ -218,3 +218,17 @@ func (l Loader) LoadPRM(parts ...string) ([]psx.Object, error) {
 	}
 	return objects, nil
 }
+
+// LoadTIM decodes a standalone .TIM image from the disc tree. Used for the boot
+// splashes and the menu font, which retail loads with LoadTIMTexture.
+func (l Loader) LoadTIM(parts ...string) (*psx.Image, error) {
+	data, err := l.read(parts...)
+	if err != nil {
+		return nil, err
+	}
+	img, err := psx.DecodeTIM(data)
+	if err != nil {
+		return nil, fmt.Errorf("assets: decoding TIM %v: %w", parts, err)
+	}
+	return img, nil
+}
