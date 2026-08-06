@@ -86,7 +86,10 @@ var BootSplashes = []BootSplash{
 	{Texture: "TEXTURES/REDBPAL.TIM", HoldVSyncs: 100},
 }
 
-// TitleTexture is loaded when the title screen is (re)entered.
+// TitleTexture is loaded when the title screen is (re)entered. Retail also has this
+// on screen while the boot overlay runs, which is the "loading screen" a player sees
+// between the Red Bull screen and the title, so a placeholder for an overlay should
+// draw it rather than blanking to black.
 const TitleTexture = "TEXTURES/STARTPAL.TIM"
 
 // Overlay is a separate PS-EXE that retail loads over itself via PsyQ Exec.
@@ -107,6 +110,26 @@ type Overlay struct {
 	// has no play-once latch.
 	PendingAddr uint32
 	ShownAddr   uint32
+}
+
+// BaseName is the overlay's filename without its drive or directory, uppercased.
+// The retail font has no glyph for a backslash, so the full path cannot be drawn;
+// this is what a placeholder screen should show.
+func (o Overlay) BaseName() string {
+	name := o.File
+	for i := len(name) - 1; i >= 0; i-- {
+		if name[i] == '\\' || name[i] == '/' || name[i] == ':' {
+			name = name[i+1:]
+			break
+		}
+	}
+	out := []byte(name)
+	for i := range out {
+		if out[i] >= 'a' && out[i] <= 'z' {
+			out[i] -= 'a' - 'A'
+		}
+	}
+	return string(out)
 }
 
 // BootOverlay is launched once at the end of main's boot sequence.

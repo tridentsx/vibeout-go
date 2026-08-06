@@ -330,3 +330,20 @@ func TestSplashIndexTracksTheSequence(t *testing.T) {
 		t.Errorf("index is %d after the sequence, want -1", m.SplashIndex())
 	}
 }
+
+// A placeholder screen names the overlay, but the retail font has no backslash
+// glyph, so the drive and directory have to go.
+func TestOverlayBaseName(t *testing.T) {
+	for _, tc := range []struct {
+		overlay Overlay
+		want    string
+	}{
+		{BootOverlay, "PALANIM.EXE"},
+		{PostRaceOverlays[0], "XTRO1.EXE"},
+		{PostRaceOverlays[3], "XTRO4.EXE"},
+	} {
+		if got := tc.overlay.BaseName(); got != tc.want {
+			t.Errorf("BaseName(%q) = %q, want %q", tc.overlay.File, got, tc.want)
+		}
+	}
+}

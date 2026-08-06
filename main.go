@@ -200,6 +200,19 @@ func main() {
 		}
 		splashTextures[i] = splashImage{tex: tex, w: img.Width, h: img.Height}
 	}
+	// The loading/title screen, drawn behind the overlay placeholders and on the
+	// title itself, which is what retail has on screen at both points.
+	var titleTex *sdl.GPUTexture
+	var titleW, titleH int
+	if img, imgErr := loader.LoadTIM("TEXTURES", "STARTPAL.TIM"); imgErr == nil {
+		if tex, texErr := device.NewTexture(img.Width, img.Height, img.Pixels); texErr == nil {
+			titleTex = tex
+			titleW, titleH = img.Width, img.Height
+		}
+	} else {
+		log.Printf("title screen unavailable: %v", imgErr)
+	}
+
 	// Start is edge-triggered: the state machine debounces, but a held key must not
 	// read as a fresh press on the next screen.
 	startPressed := false
@@ -347,20 +360,20 @@ func main() {
 			ui.DrawSplash(frame, lastSplashTex, lastSplashW, lastSplashH)
 		case game.StateBootOverlay, game.StatePostRaceOverlay:
 			// Overlays are separate PS-EXEs running FMV, which a port cannot execute.
-			// Show the name on black until video playback exists.
+			// Retail has the loading screen up while they load, so draw that and name
+			// the overlay over it rather than blanking to black.
 			ui.FillScreen(frame, sdl.FColor{A: 1})
+			ui.DrawSplash(frame, titleTex, titleW, titleH)
 			if overlay, ok := states.CurrentOverlay(); ok {
-				ui.DrawTextCentered(frame, overlay.Name, gameRender.RetailWidth/2, 110, gameRender.White)
-				ui.DrawTextCentered(frame, "[OVERLAY PLACEHOLDER]", gameRender.RetailWidth/2, 126,
-					sdl.FColor{R: 0.5, G: 0.5, B: 0.5, A: 1})
+				ui.DrawTextCentered(frame, overlay.BaseName(), gameRender.RetailWidth/2, 0xe4, gameRender.White)
 			}
 		case game.StateTitleAttract:
 			ui.FillScreen(frame, sdl.FColor{A: 1})
+			ui.DrawSplash(frame, titleTex, titleW, titleH)
 			// Retail draws this at (0xa0, 0xe4) and blinks it 18 ticks in every 25.
 			if game.PressStartVisible(states.Tick()) {
 				ui.DrawTextCentered(frame, "PRESS START", 0xa0, 0xe4, gameRender.White)
 			}
-			ui.DrawTextCentered(frame, "WIPEOUT 2097", gameRender.RetailWidth/2, 100, gameRender.White)
 		default:
 			trackRenderer.DrawSkyPerspective(frame, camera.Camera, 1280, 720)
 			trackRenderer.DrawPerspective(frame, camera.Camera, 1280, 720)
