@@ -245,6 +245,10 @@ type GameContext struct {
 	// Challenge II. maybe_TrackSelectScreen draws "TRACK CHEAT ACTIVE" from it and
 	// raises the selectable track count to 8.
 	AllTracksUnlocked bool
+	// RaceTypeIndex is the selected race type: the row index into
+	// Screens[ScreenRaceType]. The retail race mode lives separately in
+	// maybe_RaceModeSelection (0x80095770) rather than in this struct.
+	RaceTypeIndex uint8
 	// TeamIndex is the selected team. It has not been located in the retail context
 	// struct, so this is the port's own field rather than a mirrored offset.
 	TeamIndex uint8

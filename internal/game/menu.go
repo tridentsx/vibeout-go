@@ -19,6 +19,10 @@ type MenuItem struct {
 // MenuScreenID identifies a screen.
 type MenuScreenID int
 
+// mainScreenPositions is how many cursor stops the main screen has: the three
+// columns, START and OPTIONS.
+const mainScreenPositions = 5
+
 const (
 	ScreenNone MenuScreenID = iota
 	ScreenMain
@@ -171,6 +175,10 @@ func (c *MenuCursor) Selection() int { return c.selection[c.Screen()] }
 // track list.
 func (c *MenuCursor) itemCount(ctx *GameContext) int {
 	switch c.Screen() {
+	case ScreenMain:
+		// Three columns, then START, then OPTIONS -- the layout retail uses, so the
+		// cursor moves across five positions rather than down the item list.
+		return mainScreenPositions
 	case ScreenTrack:
 		if ctx != nil {
 			return ctx.SelectableTrackCount()
@@ -220,6 +228,30 @@ func (c *MenuCursor) Activate(ctx *GameContext) MenuAction {
 			ctx.TeamIndex = uint8(index)
 		}
 		c.Back()
+		return ActionNone
+	case ScreenRaceType:
+		if ctx != nil && index < len(Screens[ScreenRaceType].Items) {
+			ctx.RaceTypeIndex = uint8(index)
+		}
+		c.Back()
+		return ActionNone
+	}
+
+	if screen == ScreenMain {
+		switch index {
+		case 0:
+			c.stack = append(c.stack, ScreenRaceType)
+		case 1:
+			c.stack = append(c.stack, ScreenTeam)
+		case 2:
+			// Retail's third column is "CLASS AND TRACK"; it opens the track screen,
+			// with class reachable from there.
+			c.stack = append(c.stack, ScreenTrack)
+		case 3:
+			return ActionStartRace
+		case 4:
+			c.stack = append(c.stack, ScreenOptions)
+		}
 		return ActionNone
 	}
 
@@ -299,16 +331,50 @@ var ClassModels = [4]struct{ File, Object string }{
 }
 
 // TrackPreviewObjects names the object inside COMMON/JUNE.PRM that previews each
-// circuit, in menu order. Four of the eight are identifiable by name; the rest of
-// JUNE.PRM's objects are development names (upsildev5, alphadev3) that have not been
-// matched to circuits, so those entries are empty.
+// circuit, in menu order. All eight are accounted for.
+//
+// Five objects name their circuit outright. The other three carry development names
+// that match the internal track identity: every track directory contains a .OUT file
+// named after it -- TRACK01/ALPHA.OUT, TRACK20/UPSIL.OUT -- so `alphadev3` is TRACK01
+// and `upsildev5` is TRACK20. `poltrack` is then the only object and TRACK02 (BETA)
+// the only circuit left unassigned.
+//
+// The previews are stylised sculptures rather than plan views of the circuits, so
+// matching them by shape does not work: sagamathra's bounding box is nearly square
+// (1.16) where TRACK08's centreline is 2.60. The naming is the only reliable route.
 var TrackPreviewObjects = [8]string{
-	"",              // Talon's Reach
-	"",              // Sagarmatha
-	"valparisso",    // Valparaiso
-	"",              // Phenitia Park
-	"",              // Gare d'Europa
-	"odessakeys",    // Odessa Keys
-	"vostok",        // Vostok Island
-	"spilskinanke",  // Spilskinanke
+	"alphadev3",    // 0 Talon's Reach   TRACK01 ALPHA
+	"sagamathra",   // 1 Sagarmatha      TRACK08 THETA
+	"valparisso",   // 2 Valparaiso      TRACK13 NU
+	"upsildev5",    // 3 Phenitia Park   TRACK20 UPSIL
+	"poltrack",     // 4 Gare d'Europa   TRACK02 BETA  (by elimination)
+	"odessakeys",   // 5 Odessa Keys     TRACK17 RHO
+	"vostok",       // 6 Vostok Island   TRACK06 ZETA
+	"spilskinanke", // 7 Spilskinanke    TRACK07 ETA
+}
+
+// TrackInternalNames is each circuit's internal identity, from the .OUT file in its
+// directory. TRACK04 also contains ALPHA.OUT and is not in the menu table, so it is
+// a development copy of the first circuit.
+var TrackInternalNames = map[uint8]string{
+	1:  "ALPHA",
+	2:  "BETA",
+	6:  "ZETA",
+	7:  "ETA",
+	8:  "THETA",
+	13: "NU",
+	17: "RHO",
+	20: "UPSIL",
+}
+
+// TrackDirectories maps internal track id to its directory on the disc.
+var TrackDirectories = map[uint8]string{
+	1:  "TRACK01",
+	2:  "TRACK02",
+	6:  "TRACK06",
+	7:  "TRACK07",
+	8:  "TRACK08",
+	13: "TRACK13",
+	17: "TRACK17",
+	20: "TRACK20",
 }

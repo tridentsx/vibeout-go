@@ -510,44 +510,130 @@ func main() {
 	})
 }
 
-// drawMenuModel draws whichever model represents the highlighted row. Retail shows a
-// carousel of these; its layout has not been reversed, so one centred model stands in.
-func drawMenuModel(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
+// The main screen's layout, measured off a retail screenshot. Three columns, each a
+// heading over a model over the current selection's name, then a highlighted START
+// bar and a bottom row carrying the select prompt and OPTIONS.
+const (
+	menuPanelLeft   = 16
+	menuPanelRight  = gameRender.RetailWidth - 16
+	menuColumnCount = 3
+	menuHeadingY    = 52
+	menuModelY      = 104
+	menuNameY       = 148
+	menuStartY      = 164
+	menuFooterY     = 182
+)
+
+// mainMenuColumn describes one of the three columns.
+type mainMenuColumn struct {
+	heading []string
+	value   string
+	screen  game.MenuScreenID
+}
+
+// mainMenuColumns builds the three columns for the current context. Retail groups
+// class and track under one heading, "CLASS AND TRACK", and shows the track there.
+func mainMenuColumns(ctx *game.GameContext) []mainMenuColumn {
+	raceType := "ARCADE"
+	if items := game.Screens[game.ScreenRaceType].Items; ctx.RaceTypeIndex < uint8(len(items)) {
+		raceType = items[ctx.RaceTypeIndex].Label
+	}
+	team := "?"
+	if teams := ctx.Teams(); int(ctx.TeamIndex) < len(teams) {
+		team = teams[ctx.TeamIndex].Name
+	}
+	track := "?"
+	if int(ctx.MenuTrackIndex) < len(game.TrackMenuEntries) {
+		track = game.TrackMenuEntries[ctx.MenuTrackIndex].Name
+	}
+	return []mainMenuColumn{
+		{heading: []string{"RACE", "TYPE"}, value: raceType, screen: game.ScreenRaceType},
+		{heading: []string{"TEAM"}, value: team, screen: game.ScreenTeam},
+		{heading: []string{"CLASS", "AND", "TRACK"}, value: track, screen: game.ScreenTrack},
+	}
+}
+
+// columnCentre is the horizontal centre of column i.
+func columnCentre(i int) int {
+	width := (menuPanelRight - menuPanelLeft) / menuColumnCount
+	return menuPanelLeft + width*i + width/2
+}
+
+// drawMainScreen renders the three-column layout.
+func drawMainScreen(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
 	ctx *game.GameContext, models map[string]*assets.Model,
 	textures map[string][]*sdl.GPUTexture, spin game.Angle) {
-	var file, object string
-	switch menu.Screen() {
-	case game.ScreenClass:
-		if i := menu.Selection(); i < len(game.ClassModels) {
-			file, object = game.ClassModels[i].File, game.ClassModels[i].Object
-		}
-	case game.ScreenTeam:
-		teams := ctx.Teams()
-		if i := menu.Selection(); i < len(teams) {
-			object = teams[i].Object
-			file = "TERRY.PRM"
-			if ctx.AnimalTeams {
-				file = "WIERD.PRM"
-			}
-		}
-	case game.ScreenTrack:
-		if i := menu.Selection(); i < len(game.TrackPreviewObjects) {
-			// Only four of JUNE.PRM's objects are identifiable by circuit name; the
-			// rest are development names not yet matched, so those rows show no model.
-			object = game.TrackPreviewObjects[i]
-			file = "JUNE.PRM"
-		}
-	case game.ScreenMain:
-		// The main screen shows the currently chosen craft.
-		teams := ctx.Teams()
-		if int(ctx.TeamIndex) < len(teams) {
-			object = teams[ctx.TeamIndex].Object
-			file = "TERRY.PRM"
-			if ctx.AnimalTeams {
-				file = "WIERD.PRM"
-			}
-		}
+	columns := mainMenuColumns(ctx)
+	selected := menu.Selection()
+
+	// Models first, then the text band so labels sit in front.
+	for i := range columns {
+		file, object := mainColumnModel(ctx, i)
+		drawNamedModel(ui, frame, models, textures, file, object, columnCentre(i), menuModelY, 66, spin)
 	}
+	ui.BeginTextBand()
+
+	dim := sdl.FColor{R: 0.55, G: 0.55, B: 0.62, A: 1}
+	for i, column := range columns {
+		colour := dim
+		if i == selected {
+			colour = gameRender.White
+		}
+		x := columnCentre(i)
+		for line, text := range column.heading {
+			ui.DrawTextCentered(frame, text, x, menuHeadingY+line*9, colour)
+		}
+		ui.DrawTextCentered(frame, column.value, x, menuNameY, colour)
+	}
+
+	// START occupies its own row and is selectable after the three columns.
+	startColour := dim
+	if selected == len(columns) {
+		startColour = gameRender.White
+		ui.Fill(frame, menuPanelLeft, menuStartY-2, menuPanelRight-menuPanelLeft, 11,
+			sdl.FColor{R: 0.35, G: 0.05, B: 0.15, A: 1})
+		ui.BeginTextBand()
+	}
+	ui.DrawTextCentered(frame, "START", gameRender.RetailWidth/2, menuStartY, startColour)
+
+	optionsColour := dim
+	if selected == len(columns)+1 {
+		optionsColour = gameRender.White
+	}
+	ui.DrawText(frame, "SELECT", menuPanelLeft+4, menuFooterY, dim)
+	ui.DrawTextCentered(frame, "OPTIONS", gameRender.RetailWidth/2, menuFooterY, optionsColour)
+}
+
+// mainColumnModel is the model shown in each main-screen column.
+func mainColumnModel(ctx *game.GameContext, column int) (file, object string) {
+	switch column {
+	case 0:
+		// Retail shows a shape for the race type. Which model that is has not been
+		// identified, so this column has none yet.
+		return "", ""
+	case 1:
+		teams := ctx.Teams()
+		if int(ctx.TeamIndex) >= len(teams) {
+			return "", ""
+		}
+		file = "TERRY.PRM"
+		if ctx.AnimalTeams {
+			file = "WIERD.PRM"
+		}
+		return file, teams[ctx.TeamIndex].Object
+	case 2:
+		if int(ctx.MenuTrackIndex) >= len(game.TrackPreviewObjects) {
+			return "", ""
+		}
+		return "JUNE.PRM", game.TrackPreviewObjects[ctx.MenuTrackIndex]
+	}
+	return "", ""
+}
+
+// drawNamedModel looks an object up by name and draws it, doing nothing if either the
+// file or the object is missing.
+func drawNamedModel(ui *gameRender.UI, frame *gameRender.Frame, models map[string]*assets.Model,
+	textures map[string][]*sdl.GPUTexture, file, object string, x, y int, fill float32, spin game.Angle) {
 	if file == "" || object == "" {
 		return
 	}
@@ -559,92 +645,98 @@ func drawMenuModel(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCu
 	if target == nil {
 		return
 	}
-	gameRender.DrawMenuModel(frame, ui, target, textures[file], model.Pages,
-		gameRender.RetailWidth/2, 130, 150, spin)
+	gameRender.DrawMenuModel(frame, ui, target, textures[file], model.Pages, x, y, fill, spin)
 }
 
-// drawMenu renders the current front end screen. Retail's own layout is a 3D
-// carousel of models; this is a text stand-in with the real labels, so navigation
-// and selection can be exercised before the models exist.
+// drawMenu renders the current front end screen.
 func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor, ctx *game.GameContext,
 	models map[string]*assets.Model, textures map[string][]*sdl.GPUTexture, spin game.Angle) {
-	// Draw the highlighted selection's model first, then move to the text band so the
-	// labels sit in front of it.
-	drawMenuModel(ui, frame, menu, ctx, models, textures, spin)
+	screen := menu.Screen()
+	if screen == game.ScreenMain {
+		drawMainScreen(ui, frame, menu, ctx, models, textures, spin)
+		return
+	}
+
+	// Sub-screens: one model for the highlighted row, with the rows listed down the
+	// left.
+	file, object := subScreenModel(menu, ctx)
+	drawNamedModel(ui, frame, models, textures, file, object, 210, 118, 120, spin)
 	ui.BeginTextBand()
 
 	const (
-		titleY = 20
-		// Rows run down the left so the model has the centre of the screen.
-		firstY   = 44
+		titleY   = 28
+		firstY   = 52
 		rowPitch = 13
-		rowX     = 16
+		rowX     = 24
 	)
-	screen := menu.Screen()
-	ui.DrawTextCentered(frame, game.Screens[screen].Title, gameRender.RetailWidth/2, titleY, gameRender.White)
-
+	dim := sdl.FColor{R: 0.55, G: 0.55, B: 0.62, A: 1}
+	ui.DrawText(frame, game.Screens[screen].Title, rowX, titleY, gameRender.White)
 	selected := menu.Selection()
-	dim := sdl.FColor{R: 0.55, G: 0.55, B: 0.6, A: 1}
 
-	if screen == game.ScreenTrack {
+	switch screen {
+	case game.ScreenTrack:
 		count := ctx.SelectableTrackCount()
 		for i := 0; i < count && i < len(game.TrackMenuEntries); i++ {
-			entry := game.TrackMenuEntries[i]
 			colour := dim
 			if i == selected {
 				colour = gameRender.White
 			}
-			ui.DrawText(frame, entry.Name, rowX, firstY+i*rowPitch, colour)
-			ui.DrawText(frame, entry.Rating, 250, firstY+i*rowPitch, colour)
+			ui.DrawText(frame, game.TrackMenuEntries[i].Name, rowX, firstY+i*rowPitch, colour)
 		}
-		// Retail shows the highlighted circuit's description at the foot of the screen.
 		if selected < len(game.TrackMenuEntries) {
-			ui.DrawTextCentered(frame, game.TrackMenuEntries[selected].Description,
-				gameRender.RetailWidth/2, 200, dim)
+			entry := game.TrackMenuEntries[selected]
+			ui.DrawText(frame, entry.Rating, rowX, 196, dim)
+			ui.DrawTextCentered(frame, entry.Description, gameRender.RetailWidth/2, 210, dim)
 		}
-		return
-	}
-
-	ui.DrawTextCentered(frame, "UP DOWN SELECT-ENTER BACK-ESC", gameRender.RetailWidth/2, 236,
-		sdl.FColor{R: 0.4, G: 0.4, B: 0.45, A: 1})
-
-	if screen == game.ScreenTeam {
-		teams := ctx.Teams()
-		for i, team := range teams {
+	case game.ScreenTeam:
+		for i, team := range ctx.Teams() {
 			colour := dim
 			if i == selected {
 				colour = gameRender.White
 			}
 			ui.DrawText(frame, team.Name, rowX, firstY+i*rowPitch, colour)
 		}
-		return
+	default:
+		items := game.Screens[screen].Items
+		if len(items) == 0 {
+			ui.DrawText(frame, "NOT IMPLEMENTED", rowX, firstY, dim)
+			break
+		}
+		for i, item := range items {
+			colour := dim
+			if i == selected {
+				colour = gameRender.White
+			}
+			ui.DrawText(frame, item.Label, rowX, firstY+i*rowPitch, colour)
+		}
 	}
+	ui.DrawText(frame, "UP DOWN  ENTER  ESC", rowX, 236,
+		sdl.FColor{R: 0.4, G: 0.4, B: 0.45, A: 1})
+}
 
-	items := game.Screens[screen].Items
-	if len(items) == 0 {
-		ui.DrawTextCentered(frame, "NOT IMPLEMENTED", gameRender.RetailWidth/2, firstY+rowPitch, dim)
-		return
-	}
-	for i, item := range items {
-		colour := dim
-		if i == selected {
-			colour = gameRender.White
+// subScreenModel is the model representing the highlighted row of a sub-screen.
+func subScreenModel(menu *game.MenuCursor, ctx *game.GameContext) (file, object string) {
+	i := menu.Selection()
+	switch menu.Screen() {
+	case game.ScreenClass:
+		if i < len(game.ClassModels) {
+			return game.ClassModels[i].File, game.ClassModels[i].Object
 		}
-		ui.DrawText(frame, item.Label, rowX, firstY+i*rowPitch, colour)
-	}
-	// Show the live selections on the main screen, which is where retail displays
-	// them beside the items.
-	if screen == game.ScreenMain {
-		track := "?"
-		if int(ctx.MenuTrackIndex) < len(game.TrackMenuEntries) {
-			track = game.TrackMenuEntries[ctx.MenuTrackIndex].Name
+	case game.ScreenTeam:
+		teams := ctx.Teams()
+		if i < len(teams) {
+			file = "TERRY.PRM"
+			if ctx.AnimalTeams {
+				file = "WIERD.PRM"
+			}
+			return file, teams[i].Object
 		}
-		class := "?"
-		if int(ctx.SpeedClass) < len(game.Screens[game.ScreenClass].Items) {
-			class = game.Screens[game.ScreenClass].Items[ctx.SpeedClass].Label
+	case game.ScreenTrack:
+		if i < len(game.TrackPreviewObjects) {
+			return "JUNE.PRM", game.TrackPreviewObjects[i]
 		}
-		ui.DrawTextCentered(frame, track+"  -  "+class, gameRender.RetailWidth/2, 196, dim)
 	}
+	return "", ""
 }
 
 func vectorDot(a, b game.Vector3) float32 { return a.X*b.X + a.Y*b.Y + a.Z*b.Z }

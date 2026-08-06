@@ -2,21 +2,27 @@ package game
 
 import "testing"
 
-// The main screen's items are the ones maybe_BuildRaceSetupMenuLabels writes at
-// ascending 0x88-spaced offsets, in that order.
-func TestMainScreenItems(t *testing.T) {
-	want := []string{"RACE TYPE", "TEAM", "CLASS", "TRACK", "OPTIONS", "START"}
-	got := Screens[ScreenMain].Items
-	if len(got) != len(want) {
-		t.Fatalf("main screen has %d items, want %d", len(got), len(want))
+// Retail's main screen is three columns -- RACE TYPE, TEAM, CLASS AND TRACK -- then
+// START and OPTIONS, so the cursor has five stops rather than a six-item list.
+func TestMainScreenHasFiveCursorStops(t *testing.T) {
+	c := NewMenuCursor()
+	ctx := &GameContext{}
+	if mainScreenPositions != 5 {
+		t.Fatalf("mainScreenPositions is %d, want 5", mainScreenPositions)
 	}
-	for i := range want {
-		if got[i].Label != want[i] {
-			t.Errorf("item %d is %q, want %q", i, got[i].Label, want[i])
+	if got := c.itemCount(ctx); got != mainScreenPositions {
+		t.Fatalf("main screen has %d cursor stops, want %d", got, mainScreenPositions)
+	}
+	// Each column opens its screen.
+	for stop, want := range map[int]MenuScreenID{0: ScreenRaceType, 1: ScreenTeam, 2: ScreenTrack, 4: ScreenOptions} {
+		c := NewMenuCursor()
+		c.Move(stop, ctx)
+		if act := c.Activate(ctx); act != ActionNone {
+			t.Errorf("stop %d returned action %v, want navigation", stop, act)
 		}
-	}
-	if Screens[ScreenMain].Title != "WIPEOUT" {
-		t.Errorf("title is %q, want WIPEOUT", Screens[ScreenMain].Title)
+		if c.Screen() != want {
+			t.Errorf("stop %d opened %v, want %v", stop, c.Screen(), want)
+		}
 	}
 }
 
@@ -65,22 +71,21 @@ func TestMenuNavigation(t *testing.T) {
 		t.Error("Back from the main screen must report false")
 	}
 	ctx := &GameContext{}
-	c.Move(2, ctx) // CLASS
-	if c.Activate(ctx) != ActionNone || c.Screen() != ScreenClass {
-		t.Fatalf("activating CLASS went to %v", c.Screen())
+	c.Move(1, ctx) // the TEAM column
+	if c.Activate(ctx) != ActionNone || c.Screen() != ScreenTeam {
+		t.Fatalf("activating TEAM went to %v", c.Screen())
 	}
-	// Picking a class assigns it and returns.
-	c.Move(2, ctx) // RAPIER
+	c.Move(2, ctx) // AURICOM
 	c.Activate(ctx)
-	if ctx.SpeedClass != SpeedClassRapier {
-		t.Errorf("class is %d, want Rapier", ctx.SpeedClass)
+	if ctx.TeamIndex != 2 {
+		t.Errorf("team is %d, want 2", ctx.TeamIndex)
 	}
 	if c.Screen() != ScreenMain {
 		t.Errorf("did not return to the main screen, on %v", c.Screen())
 	}
 	// The main screen remembered where the cursor was.
-	if c.Selection() != 2 {
-		t.Errorf("main selection is %d, want 2 where it was left", c.Selection())
+	if c.Selection() != 1 {
+		t.Errorf("main selection is %d, want 1 where it was left", c.Selection())
 	}
 }
 
@@ -89,7 +94,7 @@ func TestMenuNavigation(t *testing.T) {
 func TestTrackSelectionSetsBothFields(t *testing.T) {
 	c := NewMenuCursor()
 	ctx := &GameContext{AllTracksUnlocked: true}
-	c.Move(3, ctx) // TRACK
+	c.Move(2, ctx) // the CLASS AND TRACK column
 	c.Activate(ctx)
 	if c.Screen() != ScreenTrack {
 		t.Fatalf("on %v, want the track screen", c.Screen())
@@ -118,7 +123,7 @@ func TestTrackScreenRespectsUnlocks(t *testing.T) {
 func TestStartItemReportsTheAction(t *testing.T) {
 	c := NewMenuCursor()
 	ctx := &GameContext{}
-	c.Move(5, ctx)
+	c.Move(3, ctx) // START sits after the three columns
 	if got := c.Activate(ctx); got != ActionStartRace {
 		t.Errorf("START gave action %v, want ActionStartRace", got)
 	}
@@ -170,5 +175,35 @@ func TestTeamSelectionAndClassModels(t *testing.T) {
 	}
 	if ClassModels[SpeedClassPhantom].Object != "phant" {
 		t.Errorf("Phantom model is %q, want phant", ClassModels[SpeedClassPhantom].Object)
+	}
+}
+
+// Every circuit must have a preview object, and the set must be exactly JUNE.PRM's
+// eight with no repeats.
+func TestTrackPreviewsCoverAllCircuits(t *testing.T) {
+	seen := map[string]int{}
+	for i, obj := range TrackPreviewObjects {
+		if obj == "" {
+			t.Errorf("menu index %d has no preview object", i)
+			continue
+		}
+		seen[obj]++
+	}
+	if len(seen) != 8 {
+		t.Errorf("%d distinct preview objects, want 8", len(seen))
+	}
+	for obj, n := range seen {
+		if n > 1 {
+			t.Errorf("%q is used for %d circuits", obj, n)
+		}
+	}
+	// The internal names and directories must agree with the menu table.
+	for i, entry := range TrackMenuEntries {
+		if _, ok := TrackInternalNames[entry.TrackID]; !ok {
+			t.Errorf("menu index %d (id %d) has no internal name", i, entry.TrackID)
+		}
+		if _, ok := TrackDirectories[entry.TrackID]; !ok {
+			t.Errorf("menu index %d (id %d) has no directory", i, entry.TrackID)
+		}
 	}
 }
