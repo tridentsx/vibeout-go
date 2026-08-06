@@ -295,3 +295,45 @@ func TestMainScreenTwoDimensionalNavigation(t *testing.T) {
 		t.Errorf("up from START gave %d, want the remembered column 2", c.Selection())
 	}
 }
+
+// Track names come from maybe_TrackNameByIndex, apostrophes included.
+func TestTrackNamesMatchTheExecutable(t *testing.T) {
+	want := []string{
+		"TALON'S REACH", "SAGARMATHA", "VALPARAISO", "PHENITIA PARK",
+		"GARE D'EUROPA", "ODESSA KEYS", "VOSTOK ISLAND", "SPILSKINANKE",
+	}
+	for i, name := range want {
+		if TrackMenuEntries[i].Name != name {
+			t.Errorf("menu %d is %q, want %q", i, TrackMenuEntries[i].Name, name)
+		}
+	}
+}
+
+// Every team carries the description and rating the select screen prints.
+func TestTeamDescriptionsAndRatings(t *testing.T) {
+	ratings := map[TeamRating]bool{}
+	for _, team := range TeamEntries {
+		if len(team.Description) == 0 {
+			t.Errorf("%s has no description", team.Name)
+		}
+		if team.Rating == "" {
+			t.Errorf("%s has no rating", team.Name)
+			continue
+		}
+		if ratings[team.Rating] {
+			t.Errorf("rating %s used twice", team.Rating)
+		}
+		ratings[team.Rating] = true
+	}
+	if len(ratings) != 5 {
+		t.Errorf("%d distinct ratings, want 5", len(ratings))
+	}
+	// The stat table is recorded but deliberately unattached, since the row-to-team
+	// mapping is not established.
+	if len(TeamStatTable) != 6 {
+		t.Errorf("%d stat rows, want 6", len(TeamStatTable))
+	}
+	if TeamStatTable[5] != (TeamStats{10, 10, 10, 10}) {
+		t.Error("the sixth row should be the all-tens entry")
+	}
+}

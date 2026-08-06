@@ -136,3 +136,24 @@ func TestFontAtlasFitsTheGridAssumption(t *testing.T) {
 		}
 	}
 }
+
+// The apostrophe maps to 0x2a, verified at 0x800603b4. Track names contain them, and
+// this happened to work before the case existed because 0x2a is also the index used
+// for unmapped characters -- coincidence, not intent.
+func TestFontApostrophe(t *testing.T) {
+	index, draw := FontGlyphIndex('\'')
+	if !draw {
+		t.Fatal("the apostrophe must draw")
+	}
+	if index != 0x2a {
+		t.Errorf("apostrophe maps to %#x, want 0x2a", index)
+	}
+	// It must lay out inside a real name.
+	glyphs, width := LayoutText("TALON'S REACH", 0, 0)
+	if len(glyphs) != 12 {
+		t.Errorf("laid out %d glyphs for TALON'S REACH, want 12 (the space draws nothing)", len(glyphs))
+	}
+	if width <= 0 {
+		t.Error("no width")
+	}
+}

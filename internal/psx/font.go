@@ -71,7 +71,17 @@ func FontGlyphIndex(c byte) (int, bool) {
 		return 0x2e, true
 	case c == '!':
 		return 0x2f, true
+	case c == '\'':
+		// Verified against the chain at 0x800603b4: the apostrophe maps to 0x2a. That
+		// is the same index this file uses for unmapped characters, so apostrophes
+		// rendered correctly before this case existed -- by coincidence rather than by
+		// intent, which is worth having explicit since track names contain them.
+		return 0x2a, true
 	}
+	// Retail has no fallback here: for an unmapped character it leaves the index at
+	// `c - 'A'`, which is negative for anything below 'A' and reads outside the glyph
+	// set. Clamping to a printable glyph is a deliberate deviation, chosen so a stray
+	// character cannot sample arbitrary texture memory.
 	return FontMissingGlyph, true
 }
 

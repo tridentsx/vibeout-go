@@ -139,14 +139,16 @@ type TrackMenuEntry struct {
 	TrackID uint8
 }
 
-// TrackMenuEntries is the eight circuits in menu order. The last two are the ones
+// TrackMenuEntries is the eight circuits in menu order. The names are the strings
+// maybe_TrackNameByIndex (0x80060128) returns, so they are authoritative rather than
+// transcribed from a wiki -- including the apostrophes, which the font does render. The last two are the ones
 // the `menuTrackIndex >= 6` clamp hides until Challenge II or the track cheat.
 var TrackMenuEntries = []TrackMenuEntry{
-	{Name: "TALONS REACH", Description: "A MAJOR CANADIAN INDUSTRIAL COMPLEX.", Rating: "EASY", TrackID: 1},
+	{Name: "TALON'S REACH", Description: "A MAJOR CANADIAN INDUSTRIAL COMPLEX.", Rating: "EASY", TrackID: 1},
 	{Name: "SAGARMATHA", Description: "A SNOWY TIBETAN MOUNTAIN CIRCUIT.", Rating: "EASY", TrackID: 8},
 	{Name: "VALPARAISO", Description: "A SOUTH AMERICAN JUNGLE CIRCUIT.", Rating: "TRICKY", TrackID: 13},
 	{Name: "PHENITIA PARK", Description: "A NEWLY CONSTRUCTED GERMAN COMMERCIAL PARK.", Rating: "TRICKY", TrackID: 20},
-	{Name: "GARE DEUROPA", Description: "A DISUSED FRENCH METRO SYSTEM.", Rating: "HARD", TrackID: 2},
+	{Name: "GARE D'EUROPA", Description: "A DISUSED FRENCH METRO SYSTEM.", Rating: "HARD", TrackID: 2},
 	{Name: "ODESSA KEYS", Description: "A HUGE SUSPENDED CIRCUIT OVER THE BLACK SEA.", Rating: "HARD", TrackID: 17},
 	{Name: "VOSTOK ISLAND", Description: "AN OBSCURE VOLCANIC ISLAND LOCATED IN THE SOUTH PACIFIC.", Rating: "VERY HARD", TrackID: 6},
 	{Name: "SPILSKINANKE", Description: "AN AMERICAN CITY CIRCUIT AFFECTED BY SEISMIC ACTIVITY.", Rating: "VERY HARD", TrackID: 7},
@@ -340,6 +342,44 @@ func (c *MenuCursor) Back() bool {
 	return true
 }
 
+// TeamRating is the difficulty label maybe_TeamSelectScreen prints in brackets after
+// each team's description.
+type TeamRating string
+
+const (
+	RatingBeginner     TeamRating = "BEGINNER"
+	RatingAmateur      TeamRating = "AMATEUR"
+	RatingIntermediate TeamRating = "INTERMEDIATE"
+	RatingExpert       TeamRating = "EXPERT"
+	RatingMaster       TeamRating = "MASTER"
+)
+
+// TeamStats is the four-bar profile maybe_DrawTeamStatBars renders, on a 0-10 scale.
+// The labels are its own draw order.
+type TeamStats struct {
+	TopSpeed       uint8
+	TurningAbility uint8
+	ShieldEnergy   uint8
+	Aerodynamics   uint8
+}
+
+// TeamStatTable is the byte table at 0x800180bc, five teams of four values followed by
+// a sixth row of all tens -- presumably the animal teams, which the cheat substitutes.
+//
+// WARNING: which row belongs to which team is NOT established. Read in table order the
+// values contradict the descriptions -- row 0 has the highest top speed while the first
+// description is the BEGINNER one that says "not too quick" -- so either the table is
+// ordered differently from the descriptions or the four values are not in label order.
+// They are recorded here as data and deliberately not attached to TeamEntries.
+var TeamStatTable = [6]TeamStats{
+	{7, 5, 6, 3},
+	{6, 5, 6, 5},
+	{5, 5, 4, 7},
+	{3, 7, 5, 6},
+	{3, 7, 6, 7},
+	{10, 10, 10, 10},
+}
+
 // TeamEntry is one selectable team. The names come from the object names inside
 // COMMON/TERRY.PRM -- `quirex1`, `fiesar1`, `auricom2`, `ag1`, `piranha2` -- which is
 // also the file maybe_InitTrackPropPools clones to build the fifteen-ship race field.
@@ -350,6 +390,12 @@ type TeamEntry struct {
 	Name string
 	// Object is the object name inside the PRM, which is how a loader finds the model.
 	Object string
+	// Description and Rating are the two lines and the bracketed label
+	// maybe_TeamSelectScreen (0x8005b584) draws. Pairing them with teams follows the
+	// descriptions' own content -- "excellent turning ... not too quick" is Feisar --
+	// rather than a recovered index, so the assignment is inference.
+	Description []string
+	Rating      TeamRating
 }
 
 // TeamEntries is the standard five teams, ordered as the objects appear in
@@ -361,11 +407,21 @@ type TeamEntry struct {
 // variant to prefer. The `pirhana` objects in HARRY.PRM, JULIE.PRM and PICHL.PRM at
 // 225-231 polygons are the challenge-mode Piranha, not the team craft.
 var TeamEntries = []TeamEntry{
-	{Name: "QIREX", Object: "quirex1"},
-	{Name: "FEISAR", Object: "fiesar1"},
-	{Name: "AURICOM", Object: "auricom2"},
-	{Name: "AG SYSTEMS", Object: "ag1"},
-	{Name: "PIRANHA", Object: "piranha2"},
+	{Name: "QIREX", Object: "quirex1",
+		Description: []string{"FAST WITH GOOD SHIELD CAPABILITY BUT SLIGHTLY", "HEAVY AT TURNING."},
+		Rating:      RatingExpert},
+	{Name: "FEISAR", Object: "fiesar1",
+		Description: []string{"EXCELLENT TURNING ABILITY AND EASY TO CONTROL", "BUT NOT TOO QUICK."},
+		Rating:      RatingBeginner},
+	{Name: "AURICOM", Object: "auricom2",
+		Description: []string{"GOOD ALL ROUNDER BUT AVERAGE PERFORMANCE."},
+		Rating:      RatingIntermediate},
+	{Name: "AG SYSTEMS", Object: "ag1",
+		Description: []string{"GOOD ACCELERATION AND TURNING ABILITY BUT", "WEAK SHIELD."},
+		Rating:      RatingAmateur},
+	{Name: "PIRANHA", Object: "piranha2",
+		Description: []string{"VERY FAST WITH EXCELLENT SHIELD BUT NO", "WEAPON TECHNOLOGY."},
+		Rating:      RatingMaster},
 }
 
 // AnimalTeamEntries is the set from COMMON/WIERD.PRM, which the published cheat
