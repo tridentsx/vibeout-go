@@ -268,3 +268,43 @@ writes to `*(maybe_RescueCraftObject + 0x30)`'s translation through
 `maybe_SetNodeTranslation` callers; or look for a per-tick handler in
 `maybe_RaceMain` that is gated on ship`+0xe0` being above `0x64`, since that is the
 window the drop occupies.
+
+## `ship+0xe0` is a general-purpose timer, and `0x1f4` is the rescue hold
+
+`maybe_IntegrateShipPhysicsFromPadInput` (`0x80066dac`) contains a hold, but keyed to
+`0x1f4` (500) rather than the race-start values:
+
+```asm
+lw    $v1, 224($s0)     ; ship->0xe0
+li    $v0, 0x1f4
+bne   $v1, $v0, skip    ; only when it is exactly 500
+      ...               ; walks Previous x4 then Next, rewrites ship->0x04 (section)
+sw    $zero, 80($s0)    ; velocity X
+sw    $zero, 84($s0)    ; velocity Y
+sw    $zero, 88($s0)    ; velocity Z
+addiu $v0, $v0, -1
+sw    $v0, 224($s0)
+```
+
+So `ship+0xe0` is not solely the start countdown: it is a general ship timer that
+takes `0xa6` at a race start and `0x1f4` for a **mid-race rescue**, which is what
+`RESCU.PRM` is actually named for -- the craft that retrieves a wrecked ship and
+replaces it on the track. The section-link walk here is the reposition.
+
+Because the branch tests equality, the velocity zeroing happens on exactly one tick
+and the timer then falls out of the window. That is a reset, not a sustained hold, so
+it does not explain the ship being held at +300 through the intro sweep.
+
+Observed timeline to account for, from watching retail:
+
+| `ship+0xe0` | what is seen |
+|---|---|
+| `0xa6` → `0x64` | intro camera sweep; craft hovers holding the ship |
+| `0x64` | **the ship is released** -- also exactly where `UpdateRaceStartCameraArc` installs the chase or cockpit camera |
+| `0x64` → `0` | countdown; the craft is still present |
+| `0` | the craft leaves |
+
+The release coinciding with the camera handover at `0x64` is a strong hint that one
+condition drives both. The player's physics must be suppressed above `0x64`, or the
+ship would fall from +300 immediately; that suppression has not been located and is
+not the `0x1f4` path above.
