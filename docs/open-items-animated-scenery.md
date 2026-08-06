@@ -860,7 +860,44 @@ line, and painted pads plausibly only exist near the front of that. If so, a cra
 last slot standing on plain road is correct rather than misplaced -- which is worth
 confirming by looking at where the pads actually are in retail before treating it as a bug.
 
-## Resolved: the starting pads are the oracle
+## Resolved: twelve craft, not fifteen
+
+Counting pads settled the last of it. Retail puts the player on the **fourth pad from the
+back** of the grid's zig-zag, on a right-side pad, with three empty pads behind. On Talon's
+Reach that is section 271.
+
+The field size explains it, and it was in the disassembly all along
+(0x80022ef4, 0x80022f9c):
+
+```
+t2 = (gp[162] == 0) ? 4 : 5
+for pass = 0..2: perm[pass*t2 .. +4] = {2,5,8,11,14} - pass
+count = (t2 << 1) | t2        ; t2*3, so 12 or 15
+```
+
+`gp[162]` comes from the speed class being Phantom and from the circuit's section count, so
+an **ordinary race runs twelve craft and only Phantom runs fifteen**. The player takes the
+last slot, so slot 11 normally and 14 in Phantom. Slot 11 walks back to section 271 -- the
+fourth pad -- leaving 269, 267 and 265 empty, which is what retail shows. Fifteen slots fill
+all six pads and put the player on the rearmost, which it does not.
+
+Both classes now land on a pad: class 0 on section 271 face offset 1, class 3 on section 265
+face offset 2, both tile 1.
+
+### The lane sign was backwards
+
+The same count corrected a mistake. Section 271's pad is on face offset 1, whose centre is at
+**negative** X relative to the section, and observation says that is the **right-hand** lane.
+Read from the rear the pads run left, right, left, right; reading +X as "right" gave exactly
+the reverse.
+
+So world -X is to the right at these sections, the opposite of what the ship's computed Right
+vector `(0.98, 0, -0.20)` suggested. **That vector is therefore suspect** -- it is the same
+mirrored-handedness class of bug that the maintenance craft's heading turned out to be, and it
+is worth checking wherever else Right is used. The grid test now asserts the section and the
+face offset rather than a sign on X, so it does not depend on resolving that.
+
+## Superseded: the pads as an oracle
 
 The user's observation that retail is *always* on a painted pad turned the problem from
 interpretation into measurement, because the pads are authored into the track.

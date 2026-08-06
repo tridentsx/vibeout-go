@@ -196,7 +196,7 @@ func main() {
 		if !ok {
 			return fmt.Errorf("no start line section for track id %d", ctx.TrackID)
 		}
-		const gridSlots = 15
+		gridSlots := game.GridSlotCount(ctx.SpeedClass)
 		gridSlot := game.PlayerGridSlot(gridSlots)
 		if err := game.PlaceShipOnStartingGrid(ship, track, lineSection, gridSlot); err != nil {
 			return err

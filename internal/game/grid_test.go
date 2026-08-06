@@ -110,13 +110,36 @@ func TestRearmostSlotsLandOnPads(t *testing.T) {
 				slot, section, face, got, padTile)
 		}
 	}
-	// And the player specifically starts on the right-hand pad.
-	ship := &Ship{}
-	if err := PlaceShipOnStartingGrid(ship, track, TrackStartLineSection[1], PlayerGridSlot(15)); err != nil {
+	// The player's own slot must land on a pad too, and on the right one. Retail puts the
+	// craft on the fourth pad counting back from the front of the grid's zig-zag, which on
+	// Talon's Reach is section 271, with the three pads behind it empty.
+	//
+	// Note the lane sign: section 271's pad is on face offset 1, whose centre is at
+	// negative X relative to the section, yet observation says it is the right-hand lane.
+	// So world -X is to the right here, the opposite of what the ship's computed Right
+	// vector suggested. That vector is therefore suspect -- the same mirrored-handedness
+	// class of bug that the maintenance craft's heading turned out to be -- and this test
+	// deliberately asserts the section and the pad rather than a sign on X.
+	slots := GridSlotCount(0)
+	if slots != 12 {
+		t.Fatalf("an ordinary race has %d slots, want 12", slots)
+	}
+	section, ok := FindStartGridSection(track, TrackStartLineSection[1], PlayerGridSlot(slots))
+	if !ok {
+		t.Fatal("no section for the player's slot")
+	}
+	if section != 271 {
+		t.Errorf("the player starts in section %d, want 271 (the fourth pad from the back)", section)
+	}
+	s := track.Sections[section]
+	face, err := startingGridFace(track.Faces, s, PlayerGridSlot(slots))
+	if err != nil {
 		t.Fatal(err)
 	}
-	s := track.Sections[ship.SectionID]
-	if offset := ship.Position.X - float32(s.X); offset < 0 {
-		t.Errorf("the player is %.0f left of the section centre; retail starts on the right", -offset)
+	if got := face - int(s.FirstFace); got != 1 {
+		t.Errorf("the player is on face offset %d, want 1 (the right-hand lane)", got)
+	}
+	if got := track.Faces[face].Tile; got != padTile {
+		t.Errorf("the player's face is tile %d, want the pad tile %d", got, padTile)
 	}
 }

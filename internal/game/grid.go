@@ -72,6 +72,30 @@ func FindStartGridSection(track *assets.Track, lineSection, slot int) (int, bool
 // taken from InitializeRaceShipsAndStartingGrid's section walk.
 const gridSlotSectionStride = 2
 
+// GridSlotCount is how many craft take the grid. InitializeRaceShipsAndStartingGrid builds
+// its permutation with a stride that depends on a flag, and the field size follows from it
+// (0x80022ef4 and 0x80022f9c):
+//
+//	t2 = (gp[162] == 0) ? 4 : 5
+//	for pass = 0..2: perm[pass*t2 .. +4] = {2,5,8,11,14} - pass
+//	count = (t2 << 1) | t2        // t2*3, so 12 or 15
+//
+// gp[162] is set from the speed class being Phantom and from the circuit's section count,
+// so an ordinary race runs **twelve** craft and only Phantom runs fifteen. That matters for
+// placement because the player takes the last slot: 11 in a normal race, 14 in Phantom.
+//
+// Confirmed against the authored pads. Talon's Reach has six pads in a zig-zag on sections
+// 265, 267, 269, 271, 273 and 275. Twelve slots put the rearmost craft on section 271, which
+// is the fourth pad counting from the back of the grid, leaving the three behind it empty --
+// exactly what retail shows. Fifteen slots would fill all six and put the player on the
+// rearmost, which it does not.
+func GridSlotCount(speedClass SpeedClass) int {
+	if speedClass >= 3 {
+		return 15
+	}
+	return 12
+}
+
 // PlayerGridSlot is the slot the player's craft starts in, given how many slots
 // the track's grid holds.
 //
