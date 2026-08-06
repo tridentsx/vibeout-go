@@ -427,3 +427,64 @@ That is decisive where the static search is not, because it observes the write r
 than trying to predict which code performs it. It needs the emulator running at that
 moment, so it is the next step to take together rather than something to derive from
 the binary alone.
+
+## SOLVED: the craft is moved by a waypoint path state machine
+
+A watchpoint on the craft's node translation, set in an emulator, landed in
+`0x80067xxx` -- a cluster I had named as AI ship heading. That naming was wrong, and it
+is why every static search failed: I had already listed
+`maybe_IntegrateAiShipHeading` among the 40 callers of `maybe_SetNodeTranslation` and
+dismissed it on the strength of its own name and its three AI-named callers.
+
+The write is explicit once you look:
+
+```asm
+lw $v0, 120($s1)      ; $s1 is the prop pool; +0x78 is slot 0x1e
+lw $a1, 8($s0)        ; entity position x, y, z
+lw $a0, 48($v0)       ; object + 0x30, its node
+jal maybe_SetNodeTranslation
+                      ; then a rotation matrix from the entity's angles
+                      ; then node->0x40 = 1
+```
+
+Offset **120 is `0x1e * 4`**, the rescue craft's slot in `maybe_TrackPropPool`.
+
+### The entity structure
+
+Moving objects follow a linked list of waypoints, each carrying its own small state
+machine:
+
+| offset | field |
+|---|---|
+| `+0x00` | pointer to the current waypoint or track section |
+| `+0x08` | position x, y, z |
+| `+0x18` | velocity x, y, z |
+| `+0x28` | acceleration x, y, z |
+| `+0x38` | yaw, pitch, roll as halfwords |
+| `+0x44` | phase timer, counted down per update |
+| `+0x48` | pointer to the next state function |
+
+States chain by writing `+0x48`, so the flight is a sequence of timed phases rather
+than a scripted path. `maybe_IntegrateMovingObjectPath` does the integration --
+velocity accumulates from acceleration, decays by 1/8, and applies to position at 1/64,
+the same spring-and-decay shape as the chase camera -- then pushes the result into the
+scene graph.
+
+The phase thresholds in the first state are `0x190`, `0x1f4`, `0x2c6`, `0x302` and
+`0x320`. That `0x1f4` is the same value `maybe_IntegrateShipPhysicsFromPadInput` tests
+when it zeroes a ship's velocity and rewinds its section, so the rescue timers and the
+mid-race rescue are one scheme.
+
+### Corrected names
+
+| was | now |
+|---|---|
+| `maybe_IntegrateAiShipHeading` | `maybe_IntegrateMovingObjectPath` |
+| `maybe_UpdateAiShipHeadingTowardNextMarker` | `maybe_MovingObjectFlightStateA` |
+| `maybe_UpdateAiShipHeadingTowardTrackMidpoint` | `maybe_MovingObjectFlightStateB` |
+| `InitRaceCameraFromShip` | `maybe_InitMovingObjectPath` |
+| `maybe_ResetAiShipHeadingChain` | the chain reset in the same cluster |
+
+The lesson is narrow and worth keeping: a wrong name defeated a correct search. The
+function was in the result set of exactly the right query and I filtered it out by
+reading its label instead of its body.
