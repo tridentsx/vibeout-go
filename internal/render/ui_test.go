@@ -64,8 +64,8 @@ func TestUILayeringIsMonotonic(t *testing.T) {
 	// And the counter resets, or the first draw of frame two would sit behind the
 	// last draw of frame one.
 	u.BeginFrame()
-	if z := u.nextDepth(); z != depthNear+uiMaxLayers*uiLayerStep {
-		t.Errorf("after BeginFrame the first draw is at %v, want the back of the span", z)
+	if z := u.nextDepth(); z != UIBandBackground {
+		t.Errorf("after BeginFrame the first draw is at %v, want the background band", z)
 	}
 }
 
@@ -102,8 +102,29 @@ func TestUILayerStepSurvivesDepthQuantisation(t *testing.T) {
 	}
 	// And the whole span must stay in front of anything the 3D pass draws at a
 	// sensible distance.
-	if depthNear+uiLayerBase > 1000 {
+	if UIBandBackground > 1000 {
 		t.Errorf("the UI span reaches z=%v, far enough to collide with geometry",
-			depthNear+uiLayerBase)
+			UIBandBackground)
+	}
+}
+
+
+// Labels must end up in front of any model, and models between the labels and the
+// background art.
+func TestUIBandsAreOrdered(t *testing.T) {
+	if !(UIBandText < UIBandModelNear && UIBandModelNear < UIBandModelFar && UIBandModelFar < UIBandBackground) {
+		t.Fatalf("bands out of order: text %v, model %v..%v, background %v",
+			UIBandText, UIBandModelNear, UIBandModelFar, UIBandBackground)
+	}
+	u := &UI{}
+	u.BeginFrame()
+	back := u.nextDepth()
+	u.BeginTextBand()
+	text := u.nextDepth()
+	if text >= back {
+		t.Errorf("text at %v is not in front of background at %v", text, back)
+	}
+	if text > UIBandModelNear {
+		t.Errorf("text at %v would sit behind a model", text)
 	}
 }

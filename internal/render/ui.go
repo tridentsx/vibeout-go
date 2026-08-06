@@ -40,13 +40,13 @@ type UI struct {
 	white  *sdl.GPUTexture
 	width  float32
 	height float32
-	// layer increments per draw within a frame. Present issues one draw call per
+	// band is the camera-space Z of the next draw, stepping nearer per draw. Present issues one draw call per
 	// texture and iterates a Go map, so draw order between textures is randomised;
 	// with depth writes and a LESS compare, two UI quads at the same depth would
 	// swap priority every frame. That is what made the splash screens flicker
 	// between the image and the black fill beneath them. Giving each successive draw
 	// a nearer depth makes the result independent of iteration order.
-	layer int
+	band float32
 }
 
 // uiLayerBase and uiLayerStep space UI draws in camera-space Z. Later draws get a
@@ -66,21 +66,48 @@ const (
 	uiMaxLayers = uiLayerBase / uiLayerStep
 )
 
-// BeginFrame resets the layer counter. Call it once per frame before drawing.
+// The UI occupies three depth bands so a 3D model can be drawn between the
+// background art and the labels. A model needs real per-vertex depth for its own
+// faces to occlude correctly, so it cannot use the flat per-draw layering; instead
+// it is given a camera distance that lands inside UIBandModelNear..UIBandModelFar,
+// which sits between the two flat bands.
+const (
+	// UIBandBackground is where BeginFrame starts: the furthest band, for panels and
+	// full-screen art.
+	UIBandBackground = 900
+	// UIBandModelFar and UIBandModelNear bound where menu models should sit.
+	UIBandModelFar  = 800
+	UIBandModelNear = 450
+	// UIBandText is where labels draw, in front of any model.
+	UIBandText = 420
+)
+
+// BeginFrame resets to the background band. Call it once per frame before drawing.
 func (u *UI) BeginFrame() {
 	if u != nil {
-		u.layer = 0
+		u.band = UIBandBackground
 	}
 }
 
-// nextDepth returns the camera-space Z for the next draw and advances the layer.
-func (u *UI) nextDepth() float32 {
-	remaining := uiMaxLayers - u.layer
-	if remaining < 0 {
-		remaining = 0
+// BeginTextBand moves subsequent draws in front of any menu model. Call it after
+// drawing models and before drawing labels.
+func (u *UI) BeginTextBand() {
+	if u != nil && u.band > UIBandText {
+		u.band = UIBandText
 	}
-	u.layer++
-	return depthNear + float32(remaining*uiLayerStep)
+}
+
+// nextDepth returns the camera-space Z for the next draw and steps the band nearer.
+func (u *UI) nextDepth() float32 {
+	z := u.band
+	u.band -= uiLayerStep
+	if u.band < depthNear {
+		u.band = depthNear
+	}
+	if z < depthNear {
+		return depthNear
+	}
+	return z
 }
 
 // NewUI loads the font atlas and builds the helper texture. The font is

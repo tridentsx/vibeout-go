@@ -241,6 +241,24 @@ func main() {
 		log.Printf("menu artwork unavailable: %v", cmpErr)
 	}
 
+	// The menu's 3D models. Each entry is a whole PRM whose objects are looked up by
+	// name; see bn-psx/docs/wipeout2097_menu_system.md for what lives where.
+	menuModels := map[string]*assets.Model{}
+	for _, file := range []string{"VECTO.PRM", "VENOM.PRM", "RAPIE.PRM", "PHANT.PRM",
+		"TERRY.PRM", "WIERD.PRM", "JUNE.PRM"} {
+		model, modelErr := loader.LoadModel("COMMON", file)
+		if modelErr != nil {
+			log.Printf("menu model %s unavailable: %v", file, modelErr)
+			continue
+		}
+		menuModels[file] = model
+	}
+	menuModelTextures := map[string][]*sdl.GPUTexture{}
+	for file, model := range menuModels {
+		menuModelTextures[file] = device.NewTextures(model.Pages)
+	}
+	menuSpin := game.Angle(0)
+
 	// Start is edge-triggered: the state machine debounces, but a held key must not
 	// read as a fresh press on the next screen.
 	startPressed := false
@@ -360,6 +378,9 @@ func main() {
 						}
 					}
 				}
+				if states.State() == game.StateFrontEnd {
+					menuSpin = (menuSpin + gameRender.MenuModelSpinRate).Wrapped()
+				}
 				menuMove, menuActivate, menuBack = 0, false, false
 				accumulator -= tick
 				continue
@@ -454,7 +475,7 @@ func main() {
 					(gameRender.RetailWidth-menuPanelW)/2, (gameRender.RetailHeight-menuPanelH)/2,
 					menuPanelW, menuPanelH, gameRender.White)
 			}
-			drawMenu(ui, frame, menu, &states.Context)
+			drawMenu(ui, frame, menu, &states.Context, menuModels, menuModelTextures, menuSpin)
 		case game.StateTitleAttract:
 			ui.FillScreen(frame, sdl.FColor{A: 1})
 			ui.DrawSplash(frame, titleTex, titleW, titleH)
@@ -489,14 +510,75 @@ func main() {
 	})
 }
 
+// drawMenuModel draws whichever model represents the highlighted row. Retail shows a
+// carousel of these; its layout has not been reversed, so one centred model stands in.
+func drawMenuModel(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
+	ctx *game.GameContext, models map[string]*assets.Model,
+	textures map[string][]*sdl.GPUTexture, spin game.Angle) {
+	var file, object string
+	switch menu.Screen() {
+	case game.ScreenClass:
+		if i := menu.Selection(); i < len(game.ClassModels) {
+			file, object = game.ClassModels[i].File, game.ClassModels[i].Object
+		}
+	case game.ScreenTeam:
+		teams := ctx.Teams()
+		if i := menu.Selection(); i < len(teams) {
+			object = teams[i].Object
+			file = "TERRY.PRM"
+			if ctx.AnimalTeams {
+				file = "WIERD.PRM"
+			}
+		}
+	case game.ScreenTrack:
+		if i := menu.Selection(); i < len(game.TrackPreviewObjects) {
+			// Only four of JUNE.PRM's objects are identifiable by circuit name; the
+			// rest are development names not yet matched, so those rows show no model.
+			object = game.TrackPreviewObjects[i]
+			file = "JUNE.PRM"
+		}
+	case game.ScreenMain:
+		// The main screen shows the currently chosen craft.
+		teams := ctx.Teams()
+		if int(ctx.TeamIndex) < len(teams) {
+			object = teams[ctx.TeamIndex].Object
+			file = "TERRY.PRM"
+			if ctx.AnimalTeams {
+				file = "WIERD.PRM"
+			}
+		}
+	}
+	if file == "" || object == "" {
+		return
+	}
+	model := models[file]
+	if model == nil {
+		return
+	}
+	target := gameRender.FindObject(model.Objects, object)
+	if target == nil {
+		return
+	}
+	gameRender.DrawMenuModel(frame, ui, target, textures[file], model.Pages,
+		gameRender.RetailWidth/2, 130, 150, spin)
+}
+
 // drawMenu renders the current front end screen. Retail's own layout is a 3D
 // carousel of models; this is a text stand-in with the real labels, so navigation
 // and selection can be exercised before the models exist.
-func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor, ctx *game.GameContext) {
+func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor, ctx *game.GameContext,
+	models map[string]*assets.Model, textures map[string][]*sdl.GPUTexture, spin game.Angle) {
+	// Draw the highlighted selection's model first, then move to the text band so the
+	// labels sit in front of it.
+	drawMenuModel(ui, frame, menu, ctx, models, textures, spin)
+	ui.BeginTextBand()
+
 	const (
-		titleY   = 24
-		firstY   = 56
-		rowPitch = 14
+		titleY = 20
+		// Rows run down the left so the model has the centre of the screen.
+		firstY   = 44
+		rowPitch = 13
+		rowX     = 16
 	)
 	screen := menu.Screen()
 	ui.DrawTextCentered(frame, game.Screens[screen].Title, gameRender.RetailWidth/2, titleY, gameRender.White)
@@ -512,8 +594,8 @@ func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
 			if i == selected {
 				colour = gameRender.White
 			}
-			ui.DrawText(frame, entry.Name, 40, firstY+i*rowPitch, colour)
-			ui.DrawText(frame, entry.Rating, 220, firstY+i*rowPitch, colour)
+			ui.DrawText(frame, entry.Name, rowX, firstY+i*rowPitch, colour)
+			ui.DrawText(frame, entry.Rating, 250, firstY+i*rowPitch, colour)
 		}
 		// Retail shows the highlighted circuit's description at the foot of the screen.
 		if selected < len(game.TrackMenuEntries) {
@@ -533,11 +615,7 @@ func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
 			if i == selected {
 				colour = gameRender.White
 			}
-			ui.DrawTextCentered(frame, team.Name, gameRender.RetailWidth/2, firstY+i*rowPitch, colour)
-		}
-		if selected < len(teams) {
-			ui.DrawTextCentered(frame, "MODEL "+teams[selected].Object,
-				gameRender.RetailWidth/2, 200, dim)
+			ui.DrawText(frame, team.Name, rowX, firstY+i*rowPitch, colour)
 		}
 		return
 	}
@@ -552,7 +630,7 @@ func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
 		if i == selected {
 			colour = gameRender.White
 		}
-		ui.DrawTextCentered(frame, item.Label, gameRender.RetailWidth/2, firstY+i*rowPitch, colour)
+		ui.DrawText(frame, item.Label, rowX, firstY+i*rowPitch, colour)
 	}
 	// Show the live selections on the main screen, which is where retail displays
 	// them beside the items.
