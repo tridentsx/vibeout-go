@@ -207,3 +207,25 @@ func TestTrackPreviewsCoverAllCircuits(t *testing.T) {
 		}
 	}
 }
+
+// Every race type needs an icon, and they must all resolve to distinct objects.
+func TestRaceTypeModels(t *testing.T) {
+	items := Screens[ScreenRaceType].Items
+	if len(RaceTypeModels) != len(items) {
+		t.Fatalf("%d race type models for %d race types", len(RaceTypeModels), len(items))
+	}
+	seen := map[string]bool{}
+	for i, m := range RaceTypeModels {
+		if m.File == "" || m.Object == "" {
+			t.Errorf("race type %d (%s) has no model", i, items[i].Label)
+		}
+		if seen[m.Object] {
+			t.Errorf("object %q is used twice", m.Object)
+		}
+		seen[m.Object] = true
+	}
+	// The challenge entry is the hidden one, illustrated by a question mark.
+	if RaceTypeModels[4].Object != "question" {
+		t.Errorf("challenge icon is %q, want question", RaceTypeModels[4].Object)
+	}
+}

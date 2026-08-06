@@ -245,7 +245,7 @@ func main() {
 	// name; see bn-psx/docs/wipeout2097_menu_system.md for what lives where.
 	menuModels := map[string]*assets.Model{}
 	for _, file := range []string{"VECTO.PRM", "VENOM.PRM", "RAPIE.PRM", "PHANT.PRM",
-		"TERRY.PRM", "WIERD.PRM", "JUNE.PRM"} {
+		"TERRY.PRM", "WIERD.PRM", "JUNE.PRM", "HARRY.PRM"} {
 		model, modelErr := loader.LoadModel("COMMON", file)
 		if modelErr != nil {
 			log.Printf("menu model %s unavailable: %v", file, modelErr)
@@ -608,9 +608,11 @@ func drawMainScreen(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuC
 func mainColumnModel(ctx *game.GameContext, column int) (file, object string) {
 	switch column {
 	case 0:
-		// Retail shows a shape for the race type. Which model that is has not been
-		// identified, so this column has none yet.
-		return "", ""
+		if int(ctx.RaceTypeIndex) >= len(game.RaceTypeModels) {
+			return "", ""
+		}
+		m := game.RaceTypeModels[ctx.RaceTypeIndex]
+		return m.File, m.Object
 	case 1:
 		teams := ctx.Teams()
 		if int(ctx.TeamIndex) >= len(teams) {
@@ -718,6 +720,10 @@ func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
 func subScreenModel(menu *game.MenuCursor, ctx *game.GameContext) (file, object string) {
 	i := menu.Selection()
 	switch menu.Screen() {
+	case game.ScreenRaceType:
+		if i < len(game.RaceTypeModels) {
+			return game.RaceTypeModels[i].File, game.RaceTypeModels[i].Object
+		}
 	case game.ScreenClass:
 		if i < len(game.ClassModels) {
 			return game.ClassModels[i].File, game.ClassModels[i].Object

@@ -321,8 +321,31 @@ func (c *GameContext) Teams() []TeamEntry {
 	return TeamEntries
 }
 
+// RaceTypeModels names the object inside COMMON/HARRY.PRM that illustrates each race
+// type, in the order the race type screen lists them.
+//
+// `question` is a literal question mark, 51 polygons against 149-316 for the others:
+// it stands for the challenge entry, which is hidden until the medal thresholds open
+// it, so only four icons are normally selectable.
+//
+// `3d2pllink` names itself -- a 3D two-player link -- so it is the link mode.
+// `arcade2` for ONE ON ONE is inference from it being a second arcade variant rather
+// than anything stated.
+var RaceTypeModels = [5]struct{ File, Object string }{
+	{"HARRY.PRM", "arcade"},     // ARCADE
+	{"HARRY.PRM", "timetrial1"}, // TIME TRIAL
+	{"HARRY.PRM", "3d2pllink"},  // ARCADE LINK
+	{"HARRY.PRM", "arcade2"},    // ONE ON ONE
+	{"HARRY.PRM", "question"},   // CHALLENGE, hidden until unlocked
+}
+
 // ClassModels names the PRM whose single object is each class's menu model, indexed
 // by SpeedClass.
+//
+// Note that HARRY.PRM and JULIE.PRM also carry objects called vect, ven/venom, rap
+// and phant at different polygon counts -- JULIE's are the most detailed (rap is 496
+// polygons against 209 here). Which set the retail menu actually draws has not been
+// determined, so these single-object files are used for now.
 var ClassModels = [4]struct{ File, Object string }{
 	{"VECTO.PRM", "vect"},
 	{"VENOM.PRM", "ven"},

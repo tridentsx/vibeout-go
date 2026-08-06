@@ -16,6 +16,9 @@ func TestMenuModelsResolve(t *testing.T) {
 	for _, m := range game.ClassModels {
 		wants = append(wants, want{m.File, m.Object})
 	}
+	for _, m := range game.RaceTypeModels {
+		wants = append(wants, want{m.File, m.Object})
+	}
 	for _, team := range game.TeamEntries {
 		wants = append(wants, want{"TERRY.PRM", team.Object})
 	}
