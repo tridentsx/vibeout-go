@@ -22,27 +22,25 @@ func TestPlaceShipOnStartingGrid(t *testing.T) {
 			{Next: 0, X: 1000},
 		},
 	}
-	// Slot 0 is an even slot, so retail uses the section's first face carrying
-	// flag bit 0x01 without advancing: the midpoint of its vertices 0 and 2,
-	// with no normal offset because that face has no normal here.
+	// Even slots advance to the second flagged face, which here is the one carrying a
+	// normal, so the craft is lifted by normal * 75/1024.
 	ship := &Ship{}
 	if err := PlaceShipOnStartingGrid(ship, track, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	if ship.Position != (Vector3{X: 100, Y: 1000, Z: 200}) {
+	if ship.Position != (Vector3{X: 200, Y: 700, Z: 200}) {
 		t.Fatalf("even-slot position = %+v", ship.Position)
 	}
 	if ship.SectionID != 0 || ship.Yaw != 3072 {
 		t.Fatalf("section/yaw = %d/%d, want 0/3072", ship.SectionID, ship.Yaw)
 	}
 
-	// Slot 1 is odd, so it advances one face -- the other lane -- and that face
-	// does carry a normal, lifting the craft by normal * 75/1024.
+	// Slot 1 is odd, so it stays on the first flagged face, which has no normal here.
 	odd := &Ship{}
 	if err := PlaceShipOnStartingGrid(odd, track, 0, 1); err != nil {
 		t.Fatal(err)
 	}
-	if odd.Position != (Vector3{X: 200, Y: 700, Z: 200}) {
+	if odd.Position != (Vector3{X: 100, Y: 1000, Z: 200}) {
 		t.Fatalf("odd-slot position = %+v", odd.Position)
 	}
 	if odd.Position.X == ship.Position.X {
@@ -50,10 +48,11 @@ func TestPlaceShipOnStartingGrid(t *testing.T) {
 	}
 }
 
-// Retail advances one face only when the slot's side flag is set, and that flag
-// starts at 0 for slot 0 and toggles per slot. So even slots take the first face
-// carrying bit 0x01 and odd slots take the one after it. This was inverted, which
-// left the craft a lane away from its pad.
+// The two faces carrying bit 0x01 sit at the section centre and 1750 units to its
+// right. Retail starts the player on the right, so the player's slot -- 14, an even one
+// on the current reading of the permutation -- must advance to the second flagged face.
+// See the note in grid.go: the parity has been inverted twice and the real uncertainty is
+// the slot, not the parity.
 func TestStartingGridLaneParity(t *testing.T) {
 	faces := []assets.TrackFace{
 		{Flags: psx.TrackFaceTrack},
@@ -62,7 +61,7 @@ func TestStartingGridLaneParity(t *testing.T) {
 	section := assets.TrackSection{FirstFace: 0, NumFaces: 2}
 	for _, tc := range []struct {
 		slot, want int
-	}{{0, 0}, {1, 1}, {2, 0}, {3, 1}, {14, 0}} {
+	}{{0, 1}, {1, 0}, {2, 1}, {3, 0}, {14, 1}} {
 		index, err := startingGridFace(faces, section, tc.slot)
 		if err != nil || index != tc.want {
 			t.Errorf("slot %d: index/error = %d/%v, want %d/nil", tc.slot, index, err, tc.want)

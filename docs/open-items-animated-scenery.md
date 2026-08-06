@@ -824,3 +824,38 @@ things could be responsible and they need distinguishing rather than guessing:
 The third is the one to test first, and it is testable without the emulator: dump the
 faces of section 265 with their flags and tile indices, and see which carry pad geometry.
 If no face there is a pad, the fault is upstream of the lane choice.
+
+## The face dump, and what it settled
+
+Rather than flip the lane parity by feel a second time, the section geometry was dumped.
+Every TRACK01 section has exactly four faces in a consistent arrangement:
+
+| face | flags | lateral offset | position |
+|---|---|---|---|
+| 0 | `0x00` | −1750 | outside left |
+| 1 | `0x01` | 0 | centre |
+| 2 | `0x05` | +1750 | right |
+| 3 | `0x04` | +2250 | outside right |
+
+Two carry bit `0x01`, the marker the placement scans for, at the centre and 1750 to the
+right. The ship's own Right vector at the spawn is `(0.98, 0, −0.20)`, so **+X is to the
+right**. Retail starts the player on the right; taking the *first* flagged face puts it in
+the centre. So the player's slot advances, and the parity is inverted again.
+
+That is the second inversion and it should be read as a symptom, not a fix. The parity is
+not what is in doubt — the **slot** is. `gridPosition[0] = 14` was derived by hand from
+HLIL that splits the permutation across several stack variables, and if the true slot is
+odd then the plain parity was correct throughout. Re-reading that permutation at the
+instruction level is the outstanding work.
+
+### Why nothing is on a painted pad
+
+Tiles were checked as a way to find pad geometry and do not identify it: tile 5, the
+densest candidate, spans sections 226 to 320 -- 63 sections, far too broad for a grid.
+
+The likelier explanation is that there is no pad to be on. Retail's grid walks back two
+sections per slot, so fifteen slots span **thirty sections**, and at roughly 1750 units
+apiece that is a grid over 50,000 units long. Slot 14 sits 29 sections behind the start
+line, and painted pads plausibly only exist near the front of that. If so, a craft in the
+last slot standing on plain road is correct rather than misplaced -- which is worth
+confirming by looking at where the pads actually are in retail before treating it as a bug.

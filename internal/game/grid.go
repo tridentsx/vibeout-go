@@ -171,11 +171,28 @@ func startingGridFace(faces []assets.TrackFace, section assets.TrackSection, gri
 		//	face -= 0x14;
 		//	if (sideFlag[slot] != 0) face += 0x14;
 		//
-		// The side flag is built in the slot loop as `flag[i] = a0; a0 ^= 1`
-		// starting from a0 = 0, so slot 0 -- and every even slot -- uses the
-		// first flagged face, and odd slots take the next one. This was
-		// inverted, which placed the craft one lane over from its pad.
-		if gridSlot&1 != 0 {
+		// The side flag is built in the slot loop as `flag[i] = a0; a0 ^= 1` from
+		// a0 = 0, so on a plain reading even slots take the first flagged face.
+		//
+		// The geometry says which face is which. Every TRACK01 section has four:
+		//
+		//	face 0  flags 0x00  lateral offset -1750   outside left
+		//	face 1  flags 0x01  lateral offset     0   centre
+		//	face 2  flags 0x05  lateral offset +1750   right
+		//	face 3  flags 0x04  lateral offset +2250   outside right
+		//
+		// Two carry bit 0x01, at the centre and 1750 to the right, and the ship's Right
+		// vector at the spawn is (0.98, 0, -0.20), so +X is to the right. Retail starts
+		// the player on the right, and taking the first flagged face puts it in the
+		// centre, so the player's slot must advance.
+		//
+		// This inverts the parity a second time, which is uncomfortable, and the honest
+		// reading is that the parity is not what is in doubt: the slot is.
+		// gridPosition[0] = 14 was derived by hand from HLIL that splits the permutation
+		// across several stack variables, and if the true slot is odd then the plain
+		// parity was right all along. Until that permutation is re-read at the
+		// instruction level, this matches what is on screen.
+		if gridSlot&1 == 0 {
 			index++
 		}
 		if index >= end {
