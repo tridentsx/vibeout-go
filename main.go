@@ -224,17 +224,19 @@ func main() {
 	}
 	// The PAL menu texture pack. Member 5 is the 320x256 background and member 0 the
 	// 288x184 panel; MENUTIMS.CMP is the NTSC equivalent.
-	var menuBackTex, menuPanelTex *sdl.GPUTexture
-	var menuBackW, menuBackH, menuPanelW, menuPanelH int
+	var menuBackTex, menuLogoTex *sdl.GPUTexture
+	var menuBackW, menuBackH, menuLogoW, menuLogoH int
 	if imgs, cmpErr := loader.LoadTextureSet("MENUTIMP.CMP"); cmpErr == nil {
 		if len(imgs) > 5 && imgs[5] != nil {
 			if tex, e := device.NewTexture(imgs[5].Width, imgs[5].Height, imgs[5].Pixels); e == nil {
 				menuBackTex, menuBackW, menuBackH = tex, imgs[5].Width, imgs[5].Height
 			}
 		}
-		if len(imgs) > 0 && imgs[0] != nil {
-			if tex, e := device.NewTexture(imgs[0].Width, imgs[0].Height, imgs[0].Pixels); e == nil {
-				menuPanelTex, menuPanelW, menuPanelH = tex, imgs[0].Width, imgs[0].Height
+		// Member 6 is 232x32 in the PAL pack, which matches the proportions of the
+		// WipeOut 2097 logo across the top panel.
+		if len(imgs) > 6 && imgs[6] != nil {
+			if tex, e := device.NewTexture(imgs[6].Width, imgs[6].Height, imgs[6].Pixels); e == nil {
+				menuLogoTex, menuLogoW, menuLogoH = tex, imgs[6].Width, imgs[6].Height
 			}
 		}
 	} else {
@@ -264,6 +266,7 @@ func main() {
 	startPressed := false
 	// Menu input, also edge-triggered so a held key steps one row.
 	menuMove := 0
+	menuHorizontal := 0
 	menuActivate := false
 	menuBack := false
 	// lastSplash holds the most recent splash actually drawn, so a slot whose image
@@ -298,8 +301,14 @@ func main() {
 					}
 				case sdl.SCANCODE_LEFT:
 					keys.left = down
+					if down && !key.Repeat {
+						menuHorizontal--
+					}
 				case sdl.SCANCODE_RIGHT:
 					keys.right = down
+					if down && !key.Repeat {
+						menuHorizontal++
+					}
 				case sdl.SCANCODE_A:
 					keys.leftBrake = down
 				case sdl.SCANCODE_D:
@@ -363,6 +372,9 @@ func main() {
 					if menuMove != 0 {
 						menu.Move(menuMove, &states.Context)
 					}
+					if menuHorizontal != 0 {
+						menu.MoveHorizontal(menuHorizontal)
+					}
 					if menuBack && !menu.Back() {
 						// Backing out of the main screen leaves the front end, which is
 						// what retail's return of 1 means.
@@ -381,7 +393,7 @@ func main() {
 				if states.State() == game.StateFrontEnd {
 					menuSpin = (menuSpin + gameRender.MenuModelSpinRate).Wrapped()
 				}
-				menuMove, menuActivate, menuBack = 0, false, false
+				menuMove, menuHorizontal, menuActivate, menuBack = 0, 0, false, false
 				accumulator -= tick
 				continue
 			}
@@ -468,14 +480,13 @@ func main() {
 			}
 		case game.StateFrontEnd:
 			ui.FillScreen(frame, sdl.FColor{A: 1})
+			// The 320x256 background already carries the swirl and the surrounding
+			// artwork; the frame itself is drawn as lines over it. Member 0, the
+			// 288x184 panel, is not drawn: it covered the background without adding
+			// anything the line frame does not.
 			ui.DrawSplash(frame, menuBackTex, menuBackW, menuBackH)
-			if menuPanelTex != nil {
-				// Centre the 288x184 panel in the frame.
-				ui.DrawImage(frame, menuPanelTex,
-					(gameRender.RetailWidth-menuPanelW)/2, (gameRender.RetailHeight-menuPanelH)/2,
-					menuPanelW, menuPanelH, gameRender.White)
-			}
-			drawMenu(ui, frame, menu, &states.Context, menuModels, menuModelTextures, menuSpin)
+			drawMenu(ui, frame, menu, &states.Context, menuModels, menuModelTextures, menuSpin,
+				menuLogoTex, menuLogoW, menuLogoH)
 		case game.StateTitleAttract:
 			ui.FillScreen(frame, sdl.FColor{A: 1})
 			ui.DrawSplash(frame, titleTex, titleW, titleH)
@@ -510,27 +521,39 @@ func main() {
 	})
 }
 
-// The main screen's layout, measured off a retail screenshot. Three columns, each a
-// heading over a model over the current selection's name, then a highlighted START
-// bar and a bottom row carrying the select prompt and OPTIONS.
+// The main screen's layout, measured off a retail screenshot as fractions of the
+// 320x256 frame. Retail builds its frames from COMMON/MENU.DAT's line art; these are
+// hand-placed lines standing in until that file is wired up.
 const (
-	menuPanelLeft   = 16
-	menuPanelRight  = gameRender.RetailWidth - 16
+	menuFrameLeft   = 26
+	menuFrameRight  = gameRender.RetailWidth - 26
+	menuFrameTop    = 30
+	menuFrameBottom = 214
+
+	// Rows of the frame, top to bottom: the logo panel, the subtitle bar, the three
+	// columns, the selection names, START, then the footer.
+	menuLogoBottom     = 72
+	menuSubtitleBottom = 86
+	menuColumnsBottom  = 172
+	menuNamesBottom    = 186
+	menuStartBottom    = 200
+
 	menuColumnCount = 3
-	menuHeadingY    = 52
-	menuModelY      = 104
-	menuNameY       = 148
+	menuHeadingY    = 92
+	menuModelY      = 132
+	menuNameY       = 176
+	menuStartY      = 190
+	menuFooterY     = 204
+
 	// Model fill sizes are the port's own: DrawMenuModel derives its scale from each
 	// object's extent to fill this many pixels, since retail's own per-screen camera
 	// distance has not been reversed. Craft read smaller than the track shapes and
 	// race type icons at the same extent, because their bulk is concentrated along one
-	// axis, so they get a 15% larger target.
-	menuColumnFill      = 66
-	menuColumnFillCraft = 76
-	menuSubFill         = 120
-	menuSubFillCraft    = 138
-	menuStartY      = 164
-	menuFooterY     = 182
+	// axis, so they get a larger target.
+	menuColumnFill      = 52
+	menuColumnFillCraft = 60
+	menuSubFill         = 110
+	menuSubFillCraft    = 126
 )
 
 // mainMenuColumn describes one of the three columns.
@@ -564,16 +587,52 @@ func mainMenuColumns(ctx *game.GameContext) []mainMenuColumn {
 
 // columnCentre is the horizontal centre of column i.
 func columnCentre(i int) int {
-	width := (menuPanelRight - menuPanelLeft) / menuColumnCount
-	return menuPanelLeft + width*i + width/2
+	width := (menuFrameRight - menuFrameLeft) / menuColumnCount
+	return menuFrameLeft + width*i + width/2
+}
+
+// columnEdge is the x of the divider to the left of column i.
+func columnEdge(i int) int {
+	width := (menuFrameRight - menuFrameLeft) / menuColumnCount
+	return menuFrameLeft + width*i
+}
+
+// drawMainFrame draws the panel structure: the outer border and the lines splitting
+// it into the logo panel, the subtitle bar, the three columns, the name row, START and
+// the footer.
+func drawMainFrame(ui *gameRender.UI, frame *gameRender.Frame, logo *sdl.GPUTexture, logoW, logoH int) {
+	line := sdl.FColor{R: 0.85, G: 0.9, B: 1, A: 1}
+	ui.DrawRectOutline(frame, menuFrameLeft, menuFrameTop,
+		menuFrameRight-menuFrameLeft, menuFrameBottom-menuFrameTop, line)
+	for _, y := range []int{menuLogoBottom, menuSubtitleBottom, menuColumnsBottom,
+		menuNamesBottom, menuStartBottom} {
+		ui.DrawLine(frame, menuFrameLeft, y, menuFrameRight, y, line)
+	}
+	// Column dividers only span the rows the columns occupy.
+	for i := 1; i < menuColumnCount; i++ {
+		ui.DrawLine(frame, columnEdge(i), menuSubtitleBottom, columnEdge(i), menuNamesBottom, line)
+	}
+	// The footer splits after the select prompt and again after OPTIONS.
+	ui.DrawLine(frame, columnEdge(1), menuStartBottom, columnEdge(1), menuFrameBottom, line)
+	ui.DrawLine(frame, columnEdge(2), menuStartBottom, columnEdge(2), menuFrameBottom, line)
+
+	if logo != nil {
+		// Centre the logo in the top panel, leaving the swirl that is part of the
+		// background visible to its right.
+		w := menuFrameRight - menuFrameLeft - 16
+		h := menuLogoBottom - menuFrameTop - 6
+		ui.DrawImage(frame, logo, menuFrameLeft+8, menuFrameTop+3, w, h, gameRender.White)
+	}
 }
 
 // drawMainScreen renders the three-column layout.
 func drawMainScreen(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
 	ctx *game.GameContext, models map[string]*assets.Model,
-	textures map[string][]*sdl.GPUTexture, spin game.Angle) {
+	textures map[string][]*sdl.GPUTexture, spin game.Angle,
+	logo *sdl.GPUTexture, logoW, logoH int) {
 	columns := mainMenuColumns(ctx)
 	selected := menu.Selection()
+	drawMainFrame(ui, frame, logo, logoW, logoH)
 
 	// Models first, then the text band so labels sit in front.
 	for i := range columns {
@@ -588,6 +647,7 @@ func drawMainScreen(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuC
 	ui.BeginTextBand()
 
 	dim := sdl.FColor{R: 0.55, G: 0.55, B: 0.62, A: 1}
+	ui.DrawText(frame, "ESSENTIAL OPTIONS", menuFrameLeft+6, menuLogoBottom+4, gameRender.White)
 	for i, column := range columns {
 		colour := dim
 		if i == selected {
@@ -604,7 +664,8 @@ func drawMainScreen(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuC
 	startColour := dim
 	if selected == len(columns) {
 		startColour = gameRender.White
-		ui.Fill(frame, menuPanelLeft, menuStartY-2, menuPanelRight-menuPanelLeft, 11,
+		ui.Fill(frame, menuFrameLeft+1, menuNamesBottom+1,
+			menuFrameRight-menuFrameLeft-1, menuStartBottom-menuNamesBottom-1,
 			sdl.FColor{R: 0.35, G: 0.05, B: 0.15, A: 1})
 		ui.BeginTextBand()
 	}
@@ -614,7 +675,7 @@ func drawMainScreen(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuC
 	if selected == len(columns)+1 {
 		optionsColour = gameRender.White
 	}
-	ui.DrawText(frame, "SELECT", menuPanelLeft+4, menuFooterY, dim)
+	ui.DrawText(frame, "SELECT", menuFrameLeft+6, menuFooterY, dim)
 	ui.DrawTextCentered(frame, "OPTIONS", gameRender.RetailWidth/2, menuFooterY, optionsColour)
 }
 
@@ -666,10 +727,11 @@ func drawNamedModel(ui *gameRender.UI, frame *gameRender.Frame, models map[strin
 
 // drawMenu renders the current front end screen.
 func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor, ctx *game.GameContext,
-	models map[string]*assets.Model, textures map[string][]*sdl.GPUTexture, spin game.Angle) {
+	models map[string]*assets.Model, textures map[string][]*sdl.GPUTexture, spin game.Angle,
+	logo *sdl.GPUTexture, logoW, logoH int) {
 	screen := menu.Screen()
 	if screen == game.ScreenMain {
-		drawMainScreen(ui, frame, menu, ctx, models, textures, spin)
+		drawMainScreen(ui, frame, menu, ctx, models, textures, spin, logo, logoW, logoH)
 		return
 	}
 

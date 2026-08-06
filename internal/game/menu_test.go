@@ -13,16 +13,22 @@ func TestMainScreenHasFiveCursorStops(t *testing.T) {
 	if got := c.itemCount(ctx); got != mainScreenPositions {
 		t.Fatalf("main screen has %d cursor stops, want %d", got, mainScreenPositions)
 	}
-	// Each column opens its screen.
-	for stop, want := range map[int]MenuScreenID{0: ScreenRaceType, 1: ScreenTeam, 2: ScreenTrack, 4: ScreenOptions} {
+	// Each column opens its screen. Columns are reached horizontally.
+	for column, want := range map[int]MenuScreenID{0: ScreenRaceType, 1: ScreenTeam, 2: ScreenTrack} {
 		c := NewMenuCursor()
-		c.Move(stop, ctx)
+		c.MoveHorizontal(column)
 		if act := c.Activate(ctx); act != ActionNone {
-			t.Errorf("stop %d returned action %v, want navigation", stop, act)
+			t.Errorf("column %d returned action %v, want navigation", column, act)
 		}
 		if c.Screen() != want {
-			t.Errorf("stop %d opened %v, want %v", stop, c.Screen(), want)
+			t.Errorf("column %d opened %v, want %v", column, c.Screen(), want)
 		}
+	}
+	// OPTIONS is two rows down.
+	c = NewMenuCursor()
+	c.Move(2, ctx)
+	if c.Activate(ctx) != ActionNone || c.Screen() != ScreenOptions {
+		t.Errorf("two rows down opened %v, want the options screen", c.Screen())
 	}
 }
 
@@ -71,7 +77,7 @@ func TestMenuNavigation(t *testing.T) {
 		t.Error("Back from the main screen must report false")
 	}
 	ctx := &GameContext{}
-	c.Move(1, ctx) // the TEAM column
+	c.MoveHorizontal(1) // the TEAM column
 	if c.Activate(ctx) != ActionNone || c.Screen() != ScreenTeam {
 		t.Fatalf("activating TEAM went to %v", c.Screen())
 	}
@@ -94,7 +100,7 @@ func TestMenuNavigation(t *testing.T) {
 func TestTrackSelectionSetsBothFields(t *testing.T) {
 	c := NewMenuCursor()
 	ctx := &GameContext{AllTracksUnlocked: true}
-	c.Move(2, ctx) // the CLASS AND TRACK column
+	c.MoveHorizontal(2) // the CLASS AND TRACK column
 	c.Activate(ctx)
 	if c.Screen() != ScreenTrack {
 		t.Fatalf("on %v, want the track screen", c.Screen())
@@ -123,7 +129,7 @@ func TestTrackScreenRespectsUnlocks(t *testing.T) {
 func TestStartItemReportsTheAction(t *testing.T) {
 	c := NewMenuCursor()
 	ctx := &GameContext{}
-	c.Move(3, ctx) // START sits after the three columns
+	c.Move(1, ctx) // START is one row below the columns
 	if got := c.Activate(ctx); got != ActionStartRace {
 		t.Errorf("START gave action %v, want ActionStartRace", got)
 	}
@@ -158,7 +164,7 @@ func TestTeamSets(t *testing.T) {
 func TestTeamSelectionAndClassModels(t *testing.T) {
 	c := NewMenuCursor()
 	ctx := &GameContext{}
-	c.Move(1, ctx) // TEAM
+	c.MoveHorizontal(1) // TEAM
 	c.Activate(ctx)
 	if c.Screen() != ScreenTeam {
 		t.Fatalf("on %v, want the team screen", c.Screen())
@@ -243,5 +249,49 @@ func TestRaceTypeModels(t *testing.T) {
 	// The challenge entry is the hidden one, illustrated by a question mark.
 	if RaceTypeModels[4].Object != "question" {
 		t.Errorf("challenge icon is %q, want question", RaceTypeModels[4].Object)
+	}
+}
+
+// The main screen navigates in two dimensions: left and right across the three
+// columns, down to START then OPTIONS, and moving back up returns to the column that
+// was last highlighted rather than the first.
+func TestMainScreenTwoDimensionalNavigation(t *testing.T) {
+	c := NewMenuCursor()
+	ctx := &GameContext{}
+
+	c.MoveHorizontal(1)
+	c.MoveHorizontal(1)
+	if c.Selection() != 2 {
+		t.Fatalf("after two rights the cursor is at %d, want 2", c.Selection())
+	}
+	// Left and right wrap within the columns only.
+	c.MoveHorizontal(1)
+	if c.Selection() != 0 {
+		t.Errorf("right from the last column gave %d, want wrap to 0", c.Selection())
+	}
+	c.MoveHorizontal(-1)
+	if c.Selection() != 2 {
+		t.Errorf("left from the first column gave %d, want wrap to 2", c.Selection())
+	}
+
+	// Down goes to START, then OPTIONS.
+	c.Move(1, ctx)
+	if c.Selection() != MainStopStart {
+		t.Fatalf("down from a column gave %d, want START", c.Selection())
+	}
+	// Horizontal input must do nothing on the START row.
+	c.MoveHorizontal(1)
+	if c.Selection() != MainStopStart {
+		t.Errorf("right on START moved to %d", c.Selection())
+	}
+	c.Move(1, ctx)
+	if c.Selection() != MainStopOptions {
+		t.Fatalf("down from START gave %d, want OPTIONS", c.Selection())
+	}
+	// Back up twice returns to column 2, where it was.
+	c.Move(-1, ctx)
+	c.Move(-1, ctx)
+	if c.Selection() != 2 {
+		t.Errorf("up from START gave %d, want the remembered column 2", c.Selection())
 	}
 }

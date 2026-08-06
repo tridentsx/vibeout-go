@@ -19,9 +19,18 @@ type MenuItem struct {
 // MenuScreenID identifies a screen.
 type MenuScreenID int
 
-// mainScreenPositions is how many cursor stops the main screen has: the three
-// columns, START and OPTIONS.
-const mainScreenPositions = 5
+// The main screen is navigated in two dimensions, not as a list: left and right move
+// between the three columns, down drops to START and then to OPTIONS. These are the
+// cursor's stop indices.
+const (
+	// MainStopColumns is how many columns the top row has.
+	MainStopColumns = 3
+	// MainStopStart and MainStopOptions are the two rows beneath them.
+	MainStopStart   = 3
+	MainStopOptions = 4
+	// mainScreenPositions is the total number of stops.
+	mainScreenPositions = 5
+)
 
 const (
 	ScreenNone MenuScreenID = iota
@@ -150,6 +159,9 @@ type MenuCursor struct {
 	// selection is the highlighted row per screen, remembered across visits the way
 	// retail mirrors its cursor into maybe_MenuData.
 	selection map[MenuScreenID]int
+	// column remembers which of the main screen's three columns was last on, so
+	// moving up from START returns to it rather than to the first.
+	column int
 }
 
 // NewMenuCursor opens the main screen.
@@ -190,17 +202,68 @@ func (c *MenuCursor) itemCount(ctx *GameContext) int {
 	return len(Screens[c.Screen()].Items)
 }
 
-// Move steps the highlight, wrapping at both ends.
+// Move steps the highlight vertically, wrapping at both ends. On the main screen the
+// top row is the three columns, so moving down from any of them goes to START; the
+// column last used is remembered so moving back up returns to it.
 func (c *MenuCursor) Move(delta int, ctx *GameContext) {
+	screen := c.Screen()
+	if screen == ScreenMain {
+		c.moveMainVertical(delta)
+		return
+	}
 	n := c.itemCount(ctx)
 	if n == 0 {
 		return
 	}
-	s := (c.selection[c.Screen()] + delta) % n
+	s := (c.selection[screen] + delta) % n
 	if s < 0 {
 		s += n
 	}
-	c.selection[c.Screen()] = s
+	c.selection[screen] = s
+}
+
+// moveMainVertical walks the main screen's three rows: columns, START, OPTIONS.
+func (c *MenuCursor) moveMainVertical(delta int) {
+	row := 0
+	switch c.selection[ScreenMain] {
+	case MainStopStart:
+		row = 1
+	case MainStopOptions:
+		row = 2
+	default:
+		c.column = c.selection[ScreenMain]
+	}
+	row += delta
+	for row < 0 {
+		row += 3
+	}
+	row %= 3
+	switch row {
+	case 0:
+		c.selection[ScreenMain] = c.column
+	case 1:
+		c.selection[ScreenMain] = MainStopStart
+	case 2:
+		c.selection[ScreenMain] = MainStopOptions
+	}
+}
+
+// MoveHorizontal steps between the main screen's columns. It does nothing elsewhere,
+// and nothing while START or OPTIONS is highlighted.
+func (c *MenuCursor) MoveHorizontal(delta int) {
+	if c.Screen() != ScreenMain {
+		return
+	}
+	current := c.selection[ScreenMain]
+	if current >= MainStopColumns {
+		return
+	}
+	next := (current + delta) % MainStopColumns
+	if next < 0 {
+		next += MainStopColumns
+	}
+	c.selection[ScreenMain] = next
+	c.column = next
 }
 
 // Activate presses the highlighted row. It returns the action to perform, applying
@@ -276,7 +339,6 @@ func (c *MenuCursor) Back() bool {
 	c.stack = c.stack[:len(c.stack)-1]
 	return true
 }
-
 
 // TeamEntry is one selectable team. The names come from the object names inside
 // COMMON/TERRY.PRM -- `quirex1`, `fiesar1`, `auricom2`, `ag1`, `piranha2` -- which is

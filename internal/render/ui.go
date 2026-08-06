@@ -25,7 +25,6 @@ const (
 	// 320x256 (WARNING.TIM is 640x256), and retail's draw coordinates are in that
 	// frame. Using 240 cropped 16 rows off the bottom and shifted everything.
 	RetailHeight = 256
-
 )
 
 // UI draws screen-space quads in retail coordinates. It owns the font texture and
@@ -187,6 +186,40 @@ func (u *UI) Fill(f *Frame, x, y, w, h int, col sdl.FColor) {
 // FillScreen covers the whole framebuffer, for the black placeholder screens.
 func (u *UI) FillScreen(f *Frame, col sdl.FColor) {
 	u.Fill(f, 0, 0, RetailWidth, RetailHeight, col)
+}
+
+// DrawLine draws a one-pixel line between two points in retail coordinates. Only
+// horizontal and vertical lines are needed for the menu frames, so this fills the
+// bounding rectangle rather than rasterising a general line -- a diagonal would come
+// out as a filled box, which is why the menu's own art is not drawn this way.
+//
+// The menus retail draws are built from line art: COMMON/MENU.DAT holds 4563 records
+// of a start point, an end point and a colour, of which LoadMenuLineData
+// (0x8005e524) copies 4212. Wiring that file up would replace these hand-placed
+// lines with the real thing.
+func (u *UI) DrawLine(f *Frame, x0, y0, x1, y1 int, col sdl.FColor) {
+	if x1 < x0 {
+		x0, x1 = x1, x0
+	}
+	if y1 < y0 {
+		y0, y1 = y1, y0
+	}
+	w, h := x1-x0, y1-y0
+	if w == 0 {
+		w = 1
+	}
+	if h == 0 {
+		h = 1
+	}
+	u.Fill(f, x0, y0, w, h, col)
+}
+
+// DrawRectOutline draws the four edges of a rectangle.
+func (u *UI) DrawRectOutline(f *Frame, x, y, w, h int, col sdl.FColor) {
+	u.DrawLine(f, x, y, x+w, y, col)
+	u.DrawLine(f, x, y+h, x+w, y+h, col)
+	u.DrawLine(f, x, y, x, y+h, col)
+	u.DrawLine(f, x+w, y, x+w, y+h, col)
 }
 
 // DrawText draws a string with its top-left at (x, y) in retail coordinates,
