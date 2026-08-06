@@ -573,3 +573,62 @@ after the countdown had already reached zero. So the entire light-phase and rele
 portion of the trajectory is unmeasured, and the six captured rows are all from the
 departure. Getting the rest needs a logging breakpoint that records without pausing,
 not a poll-and-sleep loop — which is a tooling question rather than an analysis one.
+
+## The path system, recovered in full enough to implement
+
+`maybe_MovingObjectFlightStateB` (`0x80067344`) is the waypoint-seeking behaviour, and
+it completes the picture:
+
+```c
+waypoint = entity->currentWaypoint;      // a track section
+next     = waypoint->Next;
+
+target.x = (waypoint->x + next->x) >> 1; // the MIDPOINT of two section centres
+target.y =  waypoint->y - 0xbb8;         // 3000 above the track
+target.z = (waypoint->z + next->z) >> 1;
+
+delta = target - entity->position;
+yaw   = ratan2(delta.x, delta.z);
+                                          // then pick whichever of two candidate turns
+                                          // is shorter, and store the rate at +0x3e
+entity->accel.x = (-sin(yaw) * cos(pitch)) >> 15;
+entity->accel.y =  delta.y >> 6;          // proportional to vertical error
+entity->accel.z = ( cos(yaw) * cos(pitch)) >> 15;
+```
+
+So an object steers toward the **midpoint of its current waypoint section and that
+section's Next**, held **3000 units above the track** — the same `0xbb8` offset the start
+light gantries use, so it is the engine's standard "above the road" height.
+
+Horizontal acceleration is a unit vector from the heading; vertical is proportional to
+the error, which is a plain P controller. The integrator then does the rest:
+
+```c
+velocity += accel;
+velocity -= velocity >> 3;    // decay
+position += velocity >> 6;    // apply
+```
+
+### What this is enough for
+
+The complete chain is now known: waypoints from the per-track `0x01` flags, an initial
+position above the player, a timed first state, a seeking second state, and a
+spring-damped integrator. That is implementable.
+
+### The two gaps that remain
+
+- **How a waypoint advances.** Nothing read so far shows the condition for moving
+  `entity->currentWaypoint` on to the next flagged section. It is presumably a proximity
+  test, but presumably is not good enough to port -- on the two circuits with no flagged
+  sections at all the behaviour would differ entirely.
+- **The first state's constants.** `maybe_MovingObjectFlightStateA` sets velocity from
+  sin/cos with thresholds at `0x190`, `0x2c6` and `0x302` against its own timer, and
+  hands over below `0x1f4`. The shifts differ between its branches (`>> 0xe` versus
+  `>> 0xf`), so the speeds differ per phase, but which phase corresponds to hovering,
+  releasing and departing has not been pinned to the observed behaviour.
+
+Measured altitude is a useful check on the first of these: the craft sits at Y −423
+during the sweep and −8385 to −9399 at departure. If it were simply seeking
+`waypoint->y - 0xbb8` throughout, the altitude would be roughly constant relative to the
+road, so the climb suggests the departure phase overrides the seek or targets a much
+higher point.
