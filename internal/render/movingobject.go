@@ -20,8 +20,7 @@ func DrawMovingObject(frame *Frame, camera Camera, object *assets.Object,
 		return
 	}
 	const near = float32(1)
-	focalX := psxProjectionDistance * width / 320
-	focalY := psxProjectionDistance * height / 240
+	focalX, focalY := projectionFocals(width, height)
 	sin, cos := mover.Yaw.Sin(), mover.Yaw.Cos()
 
 	var colors [game.CraftPrimitiveCount]game.StartLightRGB

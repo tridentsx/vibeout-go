@@ -108,7 +108,6 @@ func TestUILayerStepSurvivesDepthQuantisation(t *testing.T) {
 	}
 }
 
-
 // Labels must end up in front of any model, and models between the labels and the
 // background art.
 func TestUIBandsAreOrdered(t *testing.T) {

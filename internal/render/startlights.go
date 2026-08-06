@@ -84,8 +84,7 @@ func drawGantry(frame *Frame, camera Camera, object *assets.Object,
 	position game.Vector3, yaw game.Angle, colors [game.StartLightCount]game.StartLightRGB,
 	width, height float32) {
 	const near = float32(1)
-	focalX := psxProjectionDistance * width / 320
-	focalY := psxProjectionDistance * height / 240
+	focalX, focalY := projectionFocals(width, height)
 	sin, cos := yaw.Sin(), yaw.Cos()
 
 	lamp := 0

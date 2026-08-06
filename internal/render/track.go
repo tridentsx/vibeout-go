@@ -34,6 +34,30 @@ type TrackRenderer struct {
 // ship's cockpit, wingtips clipping into view, ship dropping below frame).
 const psxProjectionDistance = float32(160)
 
+// projectionFocals returns the horizontal and vertical focal lengths for a viewport.
+//
+// These were previously scaled independently, `distance * width / 320` against
+// `distance * height / 240`. That is only correct when the window itself is 4:3: the two
+// scalings encode retail's 320x240 pixel grid, so on a 16:9 window the horizontal focal
+// length grows by 16/9 while the vertical grows by 4/3, and the image comes out stretched
+// sideways by 1.33. Reported as more than half of an object sitting outside the frame,
+// which is what a 33% horizontal magnification does to anything not dead centre.
+//
+// Retail is 4:3, so the honest options are to pillarbox a 4:3 image inside the window or to
+// keep square pixels and let a wider window show more of the world. This does the latter:
+// one focal length for both axes, keyed off height so the vertical field of view stays at
+// retail's ~73.7 degrees and the extra width becomes extra view rather than distortion.
+// Horizontal field of view therefore widens beyond retail's 90 degrees on a wide window --
+// a deliberate deviation, and the one modern ports normally take. Pillarboxing is left as a
+// display option rather than baked into the projection.
+func projectionFocals(width, height float32) (float32, float32) {
+	if height <= 0 {
+		return psxProjectionDistance, psxProjectionDistance
+	}
+	focal := psxProjectionDistance * height / 240
+	return focal, focal
+}
+
 type perspectiveVertex struct {
 	position game.Vector3
 	uv       sdl.FPoint
@@ -88,8 +112,7 @@ func (t *TrackRenderer) DrawPerspective(frame *Frame, camera Camera, width, heig
 	// that near-zero Z during projection stretches them into screen-filling
 	// slivers. A few hundred units keeps that singularity out of range.
 	const near = float32(200)
-	focalX := psxProjectionDistance * width / 320
-	focalY := psxProjectionDistance * height / 240
+	focalX, focalY := projectionFocals(width, height)
 	uv := [4]sdl.FPoint{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}, {X: 0, Y: 1}}
 	for _, face := range t.track.Faces {
 		n := 4
@@ -382,8 +405,7 @@ func drawObjectsPerspective(frame *Frame, camera Camera, objects []assets.Object
 		return
 	}
 	const near = float32(200)
-	focalX := psxProjectionDistance * width / 320
-	focalY := psxProjectionDistance * height / 240
+	focalX, focalY := projectionFocals(width, height)
 	right, _, _ := camera.Basis()
 	right.Y = 0
 	if rightLength := length(right); rightLength > 0 {

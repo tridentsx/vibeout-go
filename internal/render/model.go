@@ -31,8 +31,7 @@ func DrawShipPerspective(frame *Frame, camera Camera, ship *game.Ship, object *a
 		return
 	}
 	const near = float32(1)
-	focalX := psxProjectionDistance * width / 320
-	focalY := psxProjectionDistance * height / 240
+	focalX, focalY := projectionFocals(width, height)
 	up := cross(ship.Forward, ship.Right)
 	for _, polygon := range object.Polygons {
 		if len(polygon.Indices) < 3 {
