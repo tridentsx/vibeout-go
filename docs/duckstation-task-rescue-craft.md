@@ -89,3 +89,57 @@ Please give me:
 If `OBJ` reads as zero or nonsense, say so rather than working around it: it means the
 pointer is only populated at a different point than I think, which is itself worth
 knowing.
+
+---
+
+# Addendum: two sharper questions
+
+Since this task was written, the code that moves the craft has been found by static
+analysis after all: a waypoint path state machine at `0x800676d4` and `0x80067198`.
+That changes what is still worth measuring.
+
+## A. Does anything set section flag bit 0x01 at runtime?
+
+This is now the most valuable single answer.
+
+`maybe_InitMovingObjectPath` (`0x80067864`) decides where a moving object's path begins
+by walking the track's section list and stopping at the first section whose flag
+halfword has **bit 0x01** set:
+
+```c
+entity[0] = trackSections;
+do { entity[0] = entity[0]->Next; } while (!(entity[0]->0x96 & 1));
+```
+
+But **no section on TRACK01 has that bit set on disc.** Values there are 0, 0x20, 0x28
+and 0x30 only. So either something sets it after the track loads, or that walk simply
+runs to its section-count bound and the path starts wherever it happens to stop.
+
+To find out: with a race loaded on Talon's Reach, read the section array and count how
+many sections have bit 0x01 in the halfword at section `+0x96`.
+
+- `0x8009553c` holds a pointer to the track data structure. Read it, then read the word
+  at `+0x14` of that — call it `SECTIONS`.
+- Sections are **156 bytes** each; TRACK01 has **321** of them.
+- For each section *i*, read the 16-bit halfword at `SECTIONS + i*156 + 0x96`.
+
+Report how many have bit 0x01 set, and their indices if there are few. If the answer is
+zero, that settles it the other way, which is equally useful.
+
+## B. The craft's path, as data
+
+Still worth capturing, as originally described: sample `0x800949b4` (the countdown) and
+the craft's node translation once per frame through the whole start sequence, and report
+it as CSV. With the mechanism understood, a recorded path lets the phase durations and
+waypoint spacing be checked against it rather than derived by reading every constant.
+
+## What is no longer needed
+
+The watchpoint on `NODE + 0x14`. It already did its job -- it pointed at the function --
+and the write is now understood:
+
+```asm
+lw $v0, 120($s1)      ; prop pool + 0x78, slot 0x1e
+lw $a0, 48($v0)       ; object + 0x30, its node
+jal maybe_SetNodeTranslation
+```
