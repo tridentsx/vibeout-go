@@ -109,12 +109,20 @@ func GridSlotCount(speedClass SpeedClass) int {
 //	}
 //	if (mode == 2) gridPosition[pilot1] = a0++;     // single player: one placed back
 //
-// The loop skips both human pilot entries and a single race places one of them back, so
-// with a fifteen-entry permutation the counter reaches 14 and the player takes slot 14.
+// The loop skips both human pilot entries but a single race places only one of them back,
+// so the counter falls two short of the field size and the player takes `slots - 2`. With
+// twelve craft that is slot 10.
 //
-// This was briefly changed to 13 on the theory that both skipped entries cost the counter
-// two positions. The starting pads rule that out: slot 14 lands on one and slot 13 does
-// not. See the parity note in startingGridFace. The other modes do not: championship and challenge assign
+// The grid map settles this. Talon's Reach has a pad on each of sections 275, 273, 271, 269,
+// 267 and 265, alternating left, right, left, right, left, right, and the stride-two walk
+// gives them slots 9 to 14. Retail puts the player on a right-hand pad with left, right, left
+// on the pads behind, which is section 273 and no other: 273 is right, and 271, 269 and 267
+// behind it are left, right, left. Section 273 is slot 10.
+//
+// Getting here took two wrong turns worth recording. Slot 14 (`slots - 1` with a fifteen-craft
+// field) is a right-hand pad too, but it is the rearmost, with nothing behind it. Slot 11
+// (`slots - 1` with twelve) is a left-hand pad. Only slot 10 matches both the lane and what is
+// behind it. The other modes do not: championship and challenge assign
 // grid order from qualifying or from standings carried between races, which is
 // what maybe_ShuffleRaceOrder (called from main) and
 // maybe_AdvanceShuffledRaceOrderStep (called from maybe_ResetRaceCountdown)
@@ -129,7 +137,10 @@ func PlayerGridSlot(slots int) int {
 	if slots <= 0 {
 		return 0
 	}
-	return slots - 1
+	if slots < 3 {
+		return 0
+	}
+	return slots - 2
 }
 
 // PlaceShipOnStartingGrid ports the position/orientation portion of

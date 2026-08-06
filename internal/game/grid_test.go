@@ -71,9 +71,12 @@ func TestStartingGridLaneParity(t *testing.T) {
 
 // A single race starts the player in the last grid slot; other modes resolve the
 // slot from qualifying or standings instead.
-func TestPlayerGridSlotIsTheLastOne(t *testing.T) {
-	if got := PlayerGridSlot(15); got != 14 {
-		t.Errorf("PlayerGridSlot(15) = %d, want 14", got)
+func TestPlayerGridSlotIsTwoShortOfTheField(t *testing.T) {
+	if got := PlayerGridSlot(12); got != 10 {
+		t.Errorf("PlayerGridSlot(12) = %d, want 10", got)
+	}
+	if got := PlayerGridSlot(15); got != 13 {
+		t.Errorf("PlayerGridSlot(15) = %d, want 13", got)
 	}
 	if got := PlayerGridSlot(1); got != 0 {
 		t.Errorf("PlayerGridSlot(1) = %d, want 0", got)
@@ -114,12 +117,9 @@ func TestRearmostSlotsLandOnPads(t *testing.T) {
 	// craft on the fourth pad counting back from the front of the grid's zig-zag, which on
 	// Talon's Reach is section 271, with the three pads behind it empty.
 	//
-	// Note the lane sign: section 271's pad is on face offset 1, whose centre is at
-	// negative X relative to the section, yet observation says it is the right-hand lane.
-	// So world -X is to the right here, the opposite of what the ship's computed Right
-	// vector suggested. That vector is therefore suspect -- the same mirrored-handedness
-	// class of bug that the maintenance craft's heading turned out to be -- and this test
-	// deliberately asserts the section and the pad rather than a sign on X.
+	// +X is the right-hand side, which the grid map confirms: the pads alternate left, right
+	// going back from the line and the lane names line up with observation once the player is
+	// in the correct section.
 	slots := GridSlotCount(0)
 	if slots != 12 {
 		t.Fatalf("an ordinary race has %d slots, want 12", slots)
@@ -128,16 +128,24 @@ func TestRearmostSlotsLandOnPads(t *testing.T) {
 	if !ok {
 		t.Fatal("no section for the player's slot")
 	}
-	if section != 271 {
-		t.Errorf("the player starts in section %d, want 271 (the fourth pad from the back)", section)
+	if section != 273 {
+		t.Errorf("the player starts in section %d, want 273 -- the right-hand pad with left, "+
+			"right, left on the pads behind it", section)
 	}
 	s := track.Sections[section]
 	face, err := startingGridFace(track.Faces, s, PlayerGridSlot(slots))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := face - int(s.FirstFace); got != 1 {
-		t.Errorf("the player is on face offset %d, want 1 (the right-hand lane)", got)
+	if got := face - int(s.FirstFace); got != 2 {
+		t.Errorf("the player is on face offset %d, want 2 (the right-hand lane)", got)
+	}
+	// And that lane really is the right-hand one: +X is right for a craft heading along +Z
+	// with -Y up, which is the convention the rest of the port uses.
+	f := track.Faces[face]
+	v0, v2 := track.Vertices[f.Indices[0]], track.Vertices[f.Indices[2]]
+	if dx := (int(v0.X)+int(v2.X))/2 - int(s.X); dx <= 0 {
+		t.Errorf("the player's pad is %d from the section centre, so it is not the right lane", dx)
 	}
 	if got := track.Faces[face].Tile; got != padTile {
 		t.Errorf("the player's face is tile %d, want the pad tile %d", got, padTile)
