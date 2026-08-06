@@ -244,3 +244,27 @@ unexplained spawn elevation". The first two are wrong: the offset is 300 units, 
 real hover. The startup log line `spawn contact distance=300.0` was reporting that
 clearance, and dismissing it as a mere probe artefact was a mistake -- the number
 was meaningful and matched the placement offset exactly.
+
+## Search for the craft's animator: what has been ruled out
+
+The drop happens during the **intro camera sweep**, before the countdown proper. The
+sweep is `UpdateRaceStartCameraArc` (`0x800209f4`), driven by the ship's own timer at
+`+0xe0` running `0xa6` down to `0x64` -- about 66 ticks, 2.6 s at 25 Hz -- after which
+it installs `UpdateChaseCameraFollow` or `UpdateCockpitCameraView` depending on
+ship`+0x2a`.
+
+Places checked that do **not** touch the craft or the ship's position:
+
+| candidate | what it actually does |
+|---|---|
+| `maybe_UpdateRaceStartCountdown` (`0x800251d0`) | decrements `+0xe0`, fires SFX at 125/83/41/0. No position writes. |
+| `UpdateRaceStartCameraArc` (`0x800209f4`) | interpolates the *camera* from a node 10 `Next` links ahead, eased quadratically on `0xc8 - ship->0xe0`, offset `-0x320` in Y. Reads the ship, writes only camera state. |
+| `maybe_AnimateRescueCraftGlow` (`0x80048d08`) | the only reader of the craft's object pointer; rewrites primitive RGB only. |
+| `maybe_InitRaceCameraAndShipNodeHierarchy` (`0x800699cc`) | resets the 15 ship nodes to identity and marks them visible. No craft, no parenting. |
+| countdown gate globals `g_80094c90`, `g_800949b4` | read only by the countdown itself and `maybe_UpdateStartLightGantry`. |
+
+So the craft's position update is none of these. Remaining ideas, untried: scan for
+writes to `*(maybe_RescueCraftObject + 0x30)`'s translation through
+`maybe_SetNodeTranslation` callers; or look for a per-tick handler in
+`maybe_RaceMain` that is gated on ship`+0xe0` being above `0x64`, since that is the
+window the drop occupies.
