@@ -147,11 +147,77 @@ external point."
 | outer waypoint-walk fn | `≤0x80067640` | checks `object+0x96` bit 0, follows `object+0x4` |
 | countdown mirror | `0x800949b4` | 166→0, confirmed all captured samples landed at 0 |
 
+## 5. Addendum (session 2): answering the sharpened task
+
+`docs/duckstation-task-rescue-craft.md` picked up an addendum (commit `1091e88`,
+apparently from a separate session) with two sharper questions, since the write PC
+above was independently confirmed by static analysis of the same
+`maybe_SetNodeTranslation` call. Both were followed up live.
+
+### A. Does anything set section flag bit 0x01 at runtime? — No.
+
+`0x8009553c` → track struct → `+0x14` gave `SECTIONS = 0x801d0a0c`. Read all 321
+sections (156 bytes each) while paused during the intro sweep: **0 of 321** had bit
+0x01 set in the flag halfword at `+0x96` — matches the on-disc values (0, 0x20,
+0x28, 0x30 only) the other session already found by static analysis.
+
+Snapshotted the full 50,076-byte section array at that point, then let the race run
+all the way through the light sequence to `countdown == 0` and diffed:
+**zero bytes changed anywhere in the entire array.** Not just the flag bit — nothing
+in that whole memory region was touched during release, lights, or launch.
+
+This settles it: nothing sets bit 0x01 at runtime, at least not during the race-start
+sequence covered here. `maybe_InitMovingObjectPath`'s waypoint-list walk really is
+just running to whatever bound it hits, not being steered by a runtime flag write.
+
+### Write behavior: the position store is unconditional, not dirty-checked
+
+While arming a per-frame write breakpoint on `NODE+0x14`, three consecutive frames
+(`countdown` 141 → 140 → 139) hit with **bit-for-bit identical register values**
+about to be stored (`a1/a2/a3` = X=`0xFFFF8265`, Y=`0x00000000`, Z=`0xFFFF9AC0`,
+all three frames). `NODE+0x40` was set to 1 every time regardless.
+
+So `SetNodeTranslation` is called, and the changed flag is set, every frame this
+update path runs — whether or not the position actually differs from last frame.
+The spring integrator (`0x800676D4`) recomputes from decay math unconditionally
+rather than being dirty-checked, which also means `NODE+0x40` is not a meaningful
+"did this move" signal — it just marks "this node's update path executed this
+frame." Worth keeping in mind for any other node using the same helper.
+
+### B. Flight-path CSV — still not captured; two more approaches ruled out
+
+Two more attempts this session, both instructive failures:
+
+- **Per-frame breakpoint stepping** (`continue()` → `wait_for_pause()` → read →
+  repeat, no sleep): this is accurate — each hit landed exactly one frame apart
+  (confirmed by the countdown decrementing 141→140→139 one at a time) — but far too
+  slow in wall-clock terms to step through ~40+ identical-position frames just to
+  reach the interesting part of the sequence (release, lights). Given the position
+  is static that whole stretch (see above), this is also the wrong tool for it:
+  a write breakpoint fires on every access, not on an actual value change, so it
+  can't distinguish "static" from "moving" — this MCP's `breakpoint` tool only
+  supports execute/read/write access triggers, there is no value-changed condition.
+
+- **Sleep-then-pause jumps** (disable the breakpoint, `continue()`, sleep, `pause()`):
+  massively overshot. A 1.3s sleep jumped the countdown from 138 straight to 0 —
+  i.e. `continue()` runs far faster than real time under this MCP (roughly
+  138 frames in 1.3s, ~100x realtime), so there is no sleep duration that reliably
+  lands mid-sequence. This is the same failure mode as the original CSV attempt in
+  §2, now root-caused rather than just observed.
+
+**Best available non-pausing approach, set up but not yet run to completion**:
+`memory_watch` polls a value and reports whether it changed since the last poll,
+without needing to pause the emulator at all. Added watches on `NODE+0x14/0x18/0x1c`
+(X/Y/Z, signed word) and `0x800949b4` (countdown), intending to poll
+`memory_watch list` repeatedly while the game runs completely freely — no
+continue/wait_for_pause/pause cycle in the loop, so no overshoot and no per-frame
+round-trip cost. This should be the right tool for capturing the CSV without
+disturbing live play, but the session ended before it produced data.
+
 ## Suggested next step, if this gets picked back up
 
-A logging write-breakpoint (log-and-continue on every hit to `NODE+0x14`, rather
-than pause-sample-resume) would get the full 166→0 trace in one race, and would
-also settle the object+0x96/waypoint-list question by dumping the waypoint list
-itself when the outer function is entered. Didn't attempt this because the DuckStation
-MCP breakpoint tool as used here paused on hit rather than logging-and-continuing;
-worth checking whether it supports a non-pausing/logging mode before trying again.
+Resume the `memory_watch`-polling approach above: watches are the right primitive
+(no pause needed, reports "changed" for free), it just needs someone driving the
+race — ideally with a human at the controls for realistic timing — while polling
+`memory_watch list` on an interval short enough to catch transitions, logging only
+when `changed: true` to keep the CSV to meaningful rows.
