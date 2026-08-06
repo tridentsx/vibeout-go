@@ -67,10 +67,22 @@ func (b BootSplash) HoldTicks() int { return b.HoldVSyncs / 2 }
 
 // BootSplashes is the sequence main runs before any loop, with the literal VSync
 // loop bounds that follow each load: 0xf0, 0x32, 0x32, 0x64.
+//
+// Confirmed against a retail boot in an emulator, which shows the piracy warning,
+// the WipeOut 2097 copyright screen, then the Red Bull screen -- and no Dolby screen
+// at all. DOLBYPAL.TIM is not on the disc, so retail's load fails and the copyright
+// screen simply stays up through that slot's 50 fields, because nothing clears the
+// framebuffer. A caller must reproduce that by holding the previous image rather
+// than blanking.
 var BootSplashes = []BootSplash{
+	// The piracy warning. This file is 640x256 where the others are 320x256.
 	{Texture: "TEXTURES/WARNING.TIM", HoldVSyncs: 240},
+	// The WipeOut 2097 copyright screen.
 	{Texture: "TEXTURES/COPY2097.TIM", HoldVSyncs: 50},
+	// Requested by the executable but absent from the disc; the previous screen
+	// persists here.
 	{Texture: "TEXTURES/DOLBYPAL.TIM", HoldVSyncs: 50},
+	// The Red Bull screen. "REDB" is Red Bull; REDBNTSC.TIM is the NTSC twin.
 	{Texture: "TEXTURES/REDBPAL.TIM", HoldVSyncs: 100},
 }
 
