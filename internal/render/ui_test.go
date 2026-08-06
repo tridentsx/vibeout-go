@@ -80,3 +80,30 @@ func TestRetailFrameIsPAL(t *testing.T) {
 		t.Errorf("y=0xe4 falls outside a %d-tall frame", RetailHeight)
 	}
 }
+
+// The layer step must exceed one D16_UNORM depth quantum, or adjacent layers round
+// to the same stored depth and the ordering silently collapses back to Go's map
+// iteration order. That is what caused the flicker twice.
+func TestUILayerStepSurvivesDepthQuantisation(t *testing.T) {
+	const depthBits = 16
+	const levels = 1<<depthBits - 1
+	quantum := (depthFar - depthNear) / levels
+	if uiLayerStep <= quantum {
+		t.Fatalf("layer step %d is within one D16 quantum (%.3f); layers will collide",
+			uiLayerStep, quantum)
+	}
+	// Two adjacent layers must land on different quantised depths.
+	u := &UI{}
+	u.BeginFrame()
+	first := (u.nextDepth() - depthNear) / (depthFar - depthNear)
+	second := (u.nextDepth() - depthNear) / (depthFar - depthNear)
+	if int(first*levels) == int(second*levels) {
+		t.Errorf("adjacent layers quantise to the same D16 value (%d)", int(first*levels))
+	}
+	// And the whole span must stay in front of anything the 3D pass draws at a
+	// sensible distance.
+	if depthNear+uiLayerBase > 1000 {
+		t.Errorf("the UI span reaches z=%v, far enough to collide with geometry",
+			depthNear+uiLayerBase)
+	}
+}

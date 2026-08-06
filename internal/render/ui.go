@@ -51,10 +51,18 @@ type UI struct {
 
 // uiLayerBase and uiLayerStep space UI draws in camera-space Z. Later draws get a
 // smaller Z, hence a smaller depth, hence priority under the LESS compare. The span
-// stays just above the near plane so the whole UI still sits in front of the 3D pass.
+// stays near the near plane so the whole UI still sits in front of the 3D pass.
+//
+// The step has to survive quantisation into the D16_UNORM depth buffer or the
+// layering does nothing. depth = (z-near)/(far-near), so one representable D16 step
+// is (far-near)/65535 = 3.05 units of camera-space Z. An earlier version used a step
+// of 2, below that threshold: adjacent layers rounded to the same depth value, the
+// LESS test failed for whichever drew second, and the result went back to depending
+// on Go's randomised map iteration order -- which is what made the copyright screen
+// and the menu panel flicker.
 const (
-	uiLayerBase = 64
-	uiLayerStep = 2
+	uiLayerStep = 8
+	uiLayerBase = 512
 	uiMaxLayers = uiLayerBase / uiLayerStep
 )
 
