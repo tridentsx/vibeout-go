@@ -331,9 +331,20 @@ func PressStartVisible(tick int) bool {
 	return tick%pressStartBlinkPeriod < pressStartBlinkOn
 }
 
-// RaceSetupBackToTitle is the value maybe_FrontEndMainLoop returns to mean "the
-// player backed out"; main then continues its loop, returning to the title.
-const RaceSetupBackToTitle = 1
+// Values maybe_FrontEndMainLoop returns, which main treats as a discriminator rather
+// than as data.
+const (
+	// RaceSetupBackToTitle means the player backed out; main continues its loop and the
+	// title screen comes back.
+	RaceSetupBackToTitle = 1
+	// RaceSetupStartRace means start a race with the current context.
+	//
+	// It must not be 1. Passing a track id here instead was a bug: Talon's Reach is
+	// internal id 1, so selecting it collided with RaceSetupBackToTitle and pressing
+	// START returned to the attract screen rather than racing. The track, class and team
+	// all live in GameContext, so nothing needs to travel in this value.
+	RaceSetupStartRace = 2
+)
 
 // StateMachine drives the top-level flow. It owns no rendering: a caller asks for
 // the current state each tick and draws accordingly, then reports events back.

@@ -484,7 +484,7 @@ func main() {
 								accumulator -= tick
 								continue
 							}
-							states.FrontEndResult(int(states.Context.TrackID))
+							states.FrontEndResult(game.RaceSetupStartRace)
 						}
 					}
 				}

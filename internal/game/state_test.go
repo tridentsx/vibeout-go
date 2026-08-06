@@ -347,3 +347,29 @@ func TestOverlayBaseName(t *testing.T) {
 		}
 	}
 }
+
+// The front end's return value is a discriminator, not data. Passing a track id through
+// it collided with RaceSetupBackToTitle for Talon's Reach, whose internal id is 1, so
+// pressing START went back to the attract screen instead of racing.
+func TestStartRaceValueDoesNotCollideWithBackToTitle(t *testing.T) {
+	if RaceSetupStartRace == RaceSetupBackToTitle {
+		t.Fatal("the two setup values must differ")
+	}
+	// Every internal track id must be safe to hold in the context while starting.
+	for _, id := range []uint8{1, 2, 6, 7, 8, 13, 17, 20} {
+		m := NewStateMachine()
+		m.Context.TrackID = id
+		m.enter(StateFrontEnd)
+		m.FrontEndResult(RaceSetupStartRace)
+		if m.State() != StateRace {
+			t.Errorf("track id %d: state is %v, want a race", id, m.State())
+		}
+	}
+	// And backing out still works.
+	m := NewStateMachine()
+	m.enter(StateFrontEnd)
+	m.FrontEndResult(RaceSetupBackToTitle)
+	if m.State() != StateTitleAttract {
+		t.Errorf("backing out gave %v, want the title", m.State())
+	}
+}
