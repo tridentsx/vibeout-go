@@ -165,6 +165,40 @@ type TrackSection struct {
 	Flags          uint16
 }
 
+// Flags is the halfword the executable reads with `lhu $x, 150($section)` in a dozen
+// places, so it is runtime offset +0x96. It is already parsed from file offset 150; a
+// PathFlags() accessor was briefly added returning the high half of CollisionFlags
+// instead, which is wrong -- that half is a constant 0x7fff on every section of every
+// track, and the accessor reported all bits set everywhere.
+//
+// Observed values on TRACK01: 0 on 289 sections, 0x20 on 30, 0x28 on one, 0x30 on one.
+// So bit 0x20 is the common marker and 0x08 and 0x10 appear once each, always with it.
+//
+// Note the 30 sections carrying 0x20 is the same count as the run of faces flagged
+// 0x40 (sections 290-319), so the alternate-route strip appears to be marked on both
+// the faces and the sections.
+//
+// Bits the executable tests against this halfword, each found by locating every
+// `lhu ..., 150(...)` site and recording the mask that follows:
+const (
+	// SectionFlagPathStart is tested by maybe_InitMovingObjectPath, which walks Next
+	// until it finds a section carrying it, and by maybe_IntegrateShipPhysics,
+	// SceneRadiusCheck and the AI tactical update.
+	//
+	// It is NOT set on any TRACK01 section on disc, so either something sets it at
+	// runtime or that walk simply runs to its section-count bound. Which of those it is
+	// has not been established, and it matters: the moving-object path system starts
+	// wherever that walk stops.
+	SectionFlagPathStart uint16 = 0x01
+	// SectionFlagWallA and SectionFlagWallB gate the wall-sensor and mine-weapon paths
+	// and the spatial index build. Together they are the 0x180000 the collision
+	// dispatch tests in the full word.
+	SectionFlagWallA uint16 = 0x08
+	SectionFlagWallB uint16 = 0x10
+	// SectionFlagAlternateRoute is the common marker, on 30 of TRACK01's sections.
+	SectionFlagAlternateRoute uint16 = 0x20
+)
+
 const trackSectionSize = 156
 
 // DecodeTRS parses every TrackSection in a .TRS file's bytes.
