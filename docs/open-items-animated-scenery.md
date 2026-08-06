@@ -860,7 +860,59 @@ line, and painted pads plausibly only exist near the front of that. If so, a cra
 last slot standing on plain road is correct rather than misplaced -- which is worth
 confirming by looking at where the pads actually are in retail before treating it as a bug.
 
-## Resolved: the starting lane, read at instruction level
+## Resolved: the starting pads are the oracle
+
+The user's observation that retail is *always* on a painted pad turned the problem from
+interpretation into measurement, because the pads are authored into the track.
+
+**Tile 1 is the starting pad.** On TRACK01 it appears on 32 faces: sections 4, 5, 6 and 139
+carry it on all four faces (the line and checkpoint markings), and sections 265 to 275 carry
+it on the two faces flagged 0x01 -- the driving lanes:
+
+```
+265:[2]  266:[1,2]  267:[1]  268:[1,2]  269:[2]  270:[1,2]
+271:[1]  272:[1,2]  273:[2]  274:[1,2]  275:[1]
+```
+
+Sixteen pads. The odd sections have one lane each, alternating; the even sections have both.
+
+Walking back from the line at section 5, two Previous per slot, the six rearmost slots land
+on **275, 273, 271, 269, 267 and 265** -- exactly the six single-lane sections. Because each
+of those offers a pad in only one lane, they pin the parity with no room for argument:
+
+| parity | slots 9..14 on a pad |
+|---|---|
+| advance on an odd slot (the literal disassembly) | **0 of 6** |
+| advance on an even slot | **6 of 6** |
+
+And slot 14 then sits on section 265's pad, 855 units right of centre, which is the side
+retail starts on. So the placement is: **slot 14, advancing on an even slot**. Both of the
+"corrections" made before this evidence existed were wrong -- moving the slot to 13, and
+reverting the parity to the literal reading.
+
+### Why the disassembly reads the other way
+
+The instruction-level reading is not in doubt: `side[s2] = a0; a0 ^= 1` from `a0 = 0`
+(0x80023984), and the scan at 0x80023988 advances only when `side != 0`. The likely
+explanation is not the parity but the **order of faces within a section**. If retail's
+runtime face array runs right-to-left where the decoded .TRF runs left-to-right, then "the
+first face flagged 0x01" denotes opposite lanes in the two, and both readings are correct in
+their own frame. Confirming that needs the runtime face order and is an emulator question.
+
+A test asserts all six rearmost slots land on tile 1 and that the player ends up right of
+centre, so this cannot regress quietly.
+
+### Incidental findings
+
+- The line is found by matching the per-track value in `maybe_TrackStartSectionByTrackId`
+  (0x8008f47c) against `section->0x98`, a halfword, **not** by using it as an array index.
+  On TRACK01 the field equals the array index for low sections but gains an offset of 32
+  past the junction, so the two are not interchangeable in general.
+- `Previous(0)` on TRACK01 is **288**, not 320: section 0 is a junction, and sections 289
+  to 320 are the alternate route. The grid walk crosses that junction.
+- The .TRS section links are **big-endian** in the file.
+
+## Superseded: the earlier instruction-level reading
 
 The grid placement is settled, and the parity was never the fault. All three pieces of
 `InitializeRaceShipsAndStartingGrid` were read instruction by instruction.

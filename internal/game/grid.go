@@ -75,9 +75,8 @@ const gridSlotSectionStride = 2
 // PlayerGridSlot is the slot the player's craft starts in, given how many slots
 // the track's grid holds.
 //
-// In a single race the player starts at `slots - 2`, one short of the back of the grid.
-// That falls out of how InitializeRaceShipsAndStartingGrid compacts its permutation
-// (0x80022fcc, read instruction by instruction):
+// In a single race the player starts in the last slot. The permutation compaction at
+// 0x80022fcc, read instruction by instruction, is:
 //
 //	for (s2 = 0; s2 < count; s2++) {
 //	    v = perm[s2];
@@ -86,11 +85,12 @@ const gridSlotSectionStride = 2
 //	}
 //	if (mode == 2) gridPosition[pilot1] = a0++;     // single player: one placed back
 //
-// The loop skips *both* human pilot entries with no test on the race mode, but a single
-// race places only one of them afterwards. So with a fifteen-entry permutation the loop
-// assigns 0..12, the counter reaches 13, and the player takes 13. Position 14 goes to
-// nobody. Reading the loop as skipping one entry gave 14, and 14 is even, which put the
-// craft in the left-hand lane -- the wrong side, as seen in play. The other modes do not: championship and challenge assign
+// The loop skips both human pilot entries and a single race places one of them back, so
+// with a fifteen-entry permutation the counter reaches 14 and the player takes slot 14.
+//
+// This was briefly changed to 13 on the theory that both skipped entries cost the counter
+// two positions. The starting pads rule that out: slot 14 lands on one and slot 13 does
+// not. See the parity note in startingGridFace. The other modes do not: championship and challenge assign
 // grid order from qualifying or from standings carried between races, which is
 // what maybe_ShuffleRaceOrder (called from main) and
 // maybe_AdvanceShuffledRaceOrderStep (called from maybe_ResetRaceCountdown)
@@ -105,10 +105,7 @@ func PlayerGridSlot(slots int) int {
 	if slots <= 0 {
 		return 0
 	}
-	if slots == 1 {
-		return 0
-	}
-	return slots - 2
+	return slots - 1
 }
 
 // PlaceShipOnStartingGrid ports the position/orientation portion of
@@ -188,28 +185,31 @@ func startingGridFace(faces []assets.TrackFace, section assets.TrackSection, gri
 		//	face -= 0x14;
 		//	if (sideFlag[slot] != 0) face += 0x14;
 		//
-		// The side flag and the face scan, both read at instruction level:
+		// The side flag and the face scan both read as follows at instruction level:
 		//
 		//	side[s2] = a0; a0 ^= 1        ; 0x80023984, byte array at sp+120, a0 starts 0
-		//	...
 		//	scan: v0 = a3[15] & 1
 		//	      if (v0 == 0) { a3 += 20; goto scan }   ; the delay slot runs every pass,
 		//	                                            ; so a3 exits one PAST the match
 		//	      a3 -= 20                              ; delay slot, always -> the match
-		//	      if (side[gridPosition] != 0) a3 += 20 ; only an odd slot advances
+		//	      if (side[gridPosition] != 0) a3 += 20
 		//
-		// So an even slot takes the flagged face and an odd slot the one after it, which is
-		// what this originally did. On TRACK01 section 265 the two flagged faces have
-		// centres 841 units left and 855 right of the section centre, and +X is to the
-		// right, so an odd slot is the right-hand lane. With the player at slot 13 that is
-		// where it belongs.
+		// Read literally that means an even slot takes the flagged face. The authored pads
+		// say otherwise, and they are the better evidence because they are data rather than
+		// an interpretation: tile 1 marks the starting pads, and on TRACK01 the six rearmost
+		// slots land on sections 275, 273, 271, 269, 267 and 265, each with a pad in exactly
+		// one lane. Advancing on an *even* slot puts all six on their pad; the literal
+		// reading puts none of them on one. Six for six against zero for six is not a
+		// coincidence, and slot 14 then sits on section 265's pad 855 units right of centre,
+		// which is the side retail starts on.
 		//
-		// This was briefly inverted to force the right-hand lane while the slot was still
-		// believed to be 14. Inverting it was the wrong repair: the parity is faithful and
-		// the slot was wrong. Note also that the face *centre* is what matters here, not
-		// vertex 0 -- the position is midpoint(v0, v2), and reading vertex 0 offsets made
-		// the flagged faces look like "centre and right" rather than "left and right".
-		if gridSlot&1 != 0 {
+		// So the parity here is inverted relative to the disassembly, and the likely reason
+		// is not the parity at all but the *order of faces within a section*: if retail's
+		// runtime face array runs right-to-left where the decoded .TRF runs left-to-right,
+		// "the first flagged face" means opposite lanes in the two. That would explain the
+		// discrepancy without either reading being wrong. Confirming it needs the runtime
+		// face order, which is an emulator question.
+		if gridSlot&1 == 0 {
 			index++
 		}
 		if index >= end {
