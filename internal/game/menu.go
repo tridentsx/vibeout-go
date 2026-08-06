@@ -354,31 +354,47 @@ const (
 	RatingMaster       TeamRating = "MASTER"
 )
 
-// TeamStats is the four-bar profile maybe_DrawTeamStatBars renders, on a 0-10 scale.
-// The labels are its own draw order.
+// TeamStats is the five-bar profile maybe_DrawTeamStatBars (0x8005af4c) renders, on a
+// 0-10 scale. The label order is that function's own draw order; THRUST lives at
+// 0x80094ed8, away from the other four strings, which is why it was missed on a first
+// pass and the table briefly read as four values per team.
 type TeamStats struct {
+	Thrust         uint8
 	TopSpeed       uint8
 	TurningAbility uint8
 	ShieldEnergy   uint8
 	Aerodynamics   uint8
 }
 
-// TeamStatTable is the byte table at 0x800180bc, five teams of four values followed by
-// a sixth row of all tens -- presumably the animal teams, which the cheat substitutes.
+// The table at 0x800180bc, five values per team:
 //
-// WARNING: which row belongs to which team is NOT established. Read in table order the
-// values contradict the descriptions -- row 0 has the highest top speed while the first
-// description is the BEGINNER one that says "not too quick" -- so either the table is
-// ordered differently from the descriptions or the four values are not in label order.
-// They are recorded here as data and deliberately not attached to TeamEntries.
-var TeamStatTable = [6]TeamStats{
-	{7, 5, 6, 3},
-	{6, 5, 6, 5},
-	{5, 5, 4, 7},
-	{3, 7, 5, 6},
-	{3, 7, 6, 7},
-	{10, 10, 10, 10},
-}
+//	row 0:  7  5  6  3  6
+//	row 1:  5  6  5  5  5
+//	row 2:  4  7  3  7  5
+//	row 3:  6  3  7  6  7
+//	row 4: 10 10 10 10 10
+//
+// Which row belongs to which team was settled by comparing the values against bars read
+// off the retail screen: rows 1 and 2 match Auricom and Qirex exactly, and rows 0 and 3
+// match AG Systems and Feisar within the one-unit error of reading an ungraded bar.
+//
+// The stats then corroborate every description independently, which is what makes the
+// assignment safe rather than plausible:
+//
+//	row 0  thrust 7, turning 6, shield 3   "GOOD ACCELERATION AND TURNING ABILITY BUT
+//	                                        WEAK SHIELD"            AG SYSTEMS  AMATEUR
+//	row 1  all fives                       "GOOD ALL ROUNDER BUT AVERAGE PERFORMANCE"
+//	                                                                AURICOM  INTERMEDIATE
+//	row 2  speed 7, shield 7, turning 3    "FAST WITH GOOD SHIELD CAPABILITY BUT
+//	                                        SLIGHTLY HEAVY AT TURNING"   QIREX  EXPERT
+//	row 3  speed 3, turning 7              "EXCELLENT TURNING ABILITY AND EASY TO
+//	                                        CONTROL BUT NOT TOO QUICK"  FEISAR  BEGINNER
+//	row 4  everything maxed                "VERY FAST WITH EXCELLENT SHIELD BUT NO
+//	                                        WEAPON TECHNOLOGY"        PIRANHA  MASTER
+//
+// So the table order is AG Systems, Auricom, Qirex, Feisar, Piranha -- the WipeOut 1
+// team order with Piranha appended -- and it differs from the order the objects appear
+// in inside TERRY.PRM.
 
 // TeamEntry is one selectable team. The names come from the object names inside
 // COMMON/TERRY.PRM -- `quirex1`, `fiesar1`, `auricom2`, `ag1`, `piranha2` -- which is
@@ -390,6 +406,8 @@ type TeamEntry struct {
 	Name string
 	// Object is the object name inside the PRM, which is how a loader finds the model.
 	Object string
+	// Stats is the five-bar profile from the table at 0x800180bc.
+	Stats TeamStats
 	// Description and Rating are the two lines and the bracketed label
 	// maybe_TeamSelectScreen (0x8005b584) draws. Pairing them with teams follows the
 	// descriptions' own content -- "excellent turning ... not too quick" is Feisar --
@@ -407,21 +425,38 @@ type TeamEntry struct {
 // variant to prefer. The `pirhana` objects in HARRY.PRM, JULIE.PRM and PICHL.PRM at
 // 225-231 polygons are the challenge-mode Piranha, not the team craft.
 var TeamEntries = []TeamEntry{
+	{Name: "AG SYSTEMS", Object: "ag1",
+		Stats:       TeamStats{Thrust: 7, TopSpeed: 5, TurningAbility: 6, ShieldEnergy: 3, Aerodynamics: 6},
+		Description: []string{"GOOD ACCELERATION AND TURNING ABILITY BUT", "WEAK SHIELD."},
+		Rating:      RatingAmateur},
+	{Name: "AURICOM", Object: "auricom2",
+		Stats:       TeamStats{Thrust: 5, TopSpeed: 6, TurningAbility: 5, ShieldEnergy: 5, Aerodynamics: 5},
+		Description: []string{"GOOD ALL ROUNDER BUT AVERAGE PERFORMANCE."},
+		Rating:      RatingIntermediate},
 	{Name: "QIREX", Object: "quirex1",
+		Stats:       TeamStats{Thrust: 4, TopSpeed: 7, TurningAbility: 3, ShieldEnergy: 7, Aerodynamics: 5},
 		Description: []string{"FAST WITH GOOD SHIELD CAPABILITY BUT SLIGHTLY", "HEAVY AT TURNING."},
 		Rating:      RatingExpert},
 	{Name: "FEISAR", Object: "fiesar1",
+		Stats:       TeamStats{Thrust: 6, TopSpeed: 3, TurningAbility: 7, ShieldEnergy: 6, Aerodynamics: 7},
 		Description: []string{"EXCELLENT TURNING ABILITY AND EASY TO CONTROL", "BUT NOT TOO QUICK."},
 		Rating:      RatingBeginner},
-	{Name: "AURICOM", Object: "auricom2",
-		Description: []string{"GOOD ALL ROUNDER BUT AVERAGE PERFORMANCE."},
-		Rating:      RatingIntermediate},
-	{Name: "AG SYSTEMS", Object: "ag1",
-		Description: []string{"GOOD ACCELERATION AND TURNING ABILITY BUT", "WEAK SHIELD."},
-		Rating:      RatingAmateur},
 	{Name: "PIRANHA", Object: "piranha2",
+		Stats:       TeamStats{Thrust: 10, TopSpeed: 10, TurningAbility: 10, ShieldEnergy: 10, Aerodynamics: 10},
 		Description: []string{"VERY FAST WITH EXCELLENT SHIELD BUT NO", "WEAPON TECHNOLOGY."},
 		Rating:      RatingMaster},
+}
+
+// TeamStatLabels is the bar order maybe_DrawTeamStatBars draws.
+var TeamStatLabels = [5]string{"THRUST", "TOP SPEED", "TURNING ABILITY", "SHIELD ENERGY", "AERODYNAMICS"}
+
+// TeamStatMax is the scale the bars are drawn against, set by Piranha's maxed row.
+const TeamStatMax = 10
+
+// Bars returns the five values in label order, so a caller can draw them without
+// knowing the field names.
+func (s TeamStats) Bars() [5]uint8 {
+	return [5]uint8{s.Thrust, s.TopSpeed, s.TurningAbility, s.ShieldEnergy, s.Aerodynamics}
 }
 
 // AnimalTeamEntries is the set from COMMON/WIERD.PRM, which the published cheat

@@ -142,7 +142,9 @@ func TestTeamSets(t *testing.T) {
 	if len(std) != 5 {
 		t.Fatalf("%d standard teams, want 5", len(std))
 	}
-	wantObjects := []string{"quirex1", "fiesar1", "auricom2", "ag1", "piranha2"}
+	// The order follows the stat table at 0x800180bc, not the order the objects appear
+	// in inside TERRY.PRM.
+	wantObjects := []string{"ag1", "auricom2", "quirex1", "fiesar1", "piranha2"}
 	for i, want := range wantObjects {
 		if std[i].Object != want {
 			t.Errorf("team %d model object is %q, want %q", i, std[i].Object, want)
@@ -328,12 +330,36 @@ func TestTeamDescriptionsAndRatings(t *testing.T) {
 	if len(ratings) != 5 {
 		t.Errorf("%d distinct ratings, want 5", len(ratings))
 	}
-	// The stat table is recorded but deliberately unattached, since the row-to-team
-	// mapping is not established.
-	if len(TeamStatTable) != 6 {
-		t.Errorf("%d stat rows, want 6", len(TeamStatTable))
+	// Each team's stats must agree with its description, which is what established the
+	// row order in the first place.
+	byName := map[string]TeamStats{}
+	for _, team := range TeamEntries {
+		byName[team.Name] = team.Stats
 	}
-	if TeamStatTable[5] != (TeamStats{10, 10, 10, 10}) {
-		t.Error("the sixth row should be the all-tens entry")
+	if s := byName["AG SYSTEMS"]; s.ShieldEnergy != 3 {
+		t.Errorf("AG Systems shield is %d; its description says WEAK SHIELD", s.ShieldEnergy)
+	}
+	if s := byName["FEISAR"]; s.TopSpeed != 3 || s.TurningAbility != 7 {
+		t.Errorf("Feisar is %d speed / %d turning; its description says excellent turning, not too quick",
+			s.TopSpeed, s.TurningAbility)
+	}
+	if s := byName["QIREX"]; s.TurningAbility != 3 || s.ShieldEnergy != 7 {
+		t.Errorf("Qirex is %d turning / %d shield; its description says heavy at turning, good shield",
+			s.TurningAbility, s.ShieldEnergy)
+	}
+	// Auricom is the all rounder: every bar within one of the middle. Its row is
+	// 5 6 5 5 5, not a flat five -- top speed is the one that stands out.
+	for i, v := range byName["AURICOM"].Bars() {
+		if v < 5 || v > 6 {
+			t.Errorf("Auricom bar %d is %d; an all rounder should sit at 5 or 6", i, v)
+		}
+	}
+	for _, v := range byName["PIRANHA"].Bars() {
+		if v != TeamStatMax {
+			t.Errorf("Piranha should be maxed, got %d", v)
+		}
+	}
+	if len(TeamStatLabels) != 5 {
+		t.Errorf("%d stat labels, want 5 including THRUST", len(TeamStatLabels))
 	}
 }
