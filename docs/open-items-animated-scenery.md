@@ -719,3 +719,39 @@ position += velocity >> 6;    // apply
 Nothing essential is now missing. The remaining uncertainty is cosmetic: whether the snap
 at timer 500 is visible in play, or whether the craft is off-camera by then. Worth
 checking by eye once implemented rather than reversed further.
+
+## Implemented, and the measured altitude checks out
+
+`internal/game/movingobject.go` implements the system generically: a `MovingObject` per
+entity with its own timer and state, waypoints supplied through a small interface so the
+package does not depend on the asset loader, and every retail constant as a named value
+rather than inlined arithmetic. Twelve tests.
+
+Deliberately built for more than one object, since the machinery is generic even though
+retail's only current user is the rescue craft: `PoolSlot` says which prop the object
+drives, mirroring retail's `entity+0x04`.
+
+### One consistency check worth recording
+
+The emulator measured the craft at Y −8385 to −9399 shortly after the countdown reached
+zero. On flat track the snap height is `500 - 0x1388` = −4500 and the seek height is
+`500 - 0xbb8` = −2500, so a departing craft in the seeking state should sit *below* the
+measured figure, not above it.
+
+The timers resolve it. The countdown runs 166 ticks; the hover state runs from 0x320 down
+to 0x1f4, which is 300. So when the countdown hits zero the object's own timer is still
+around 634 — **it has not left the hover state at all**, and the measured altitude is
+mid-climb under `accel.y = -0x8c`, not a seek height. The two clocks run at the same rate
+but different lengths, and reading one for the other would have looked like a
+contradiction in the constants.
+
+### What the implementation does not do
+
+- Nothing drives it yet. `SpawnMovingObject` and `Advance` exist and are tested, but
+  `main` does not create an object or render one, so no craft appears in the port.
+- The release trigger is modelled as a method rather than a ship flag test. Retail reads
+  bit 0x400 of `ship + 0xc` and additionally plays a sound and swaps the camera callback;
+  only the state change is ported.
+- The vertical controller's slowness is faithful but untested against retail. A P term of
+  `delta >> 6` against a 7/8 decay takes hundreds of ticks to close a 3000-unit gap, which
+  is correct arithmetic but has not been compared with how quickly the real craft settles.
