@@ -199,3 +199,32 @@ then discards it in a self-branching delay loop, and `sub_8004c108`'s only side
 effect is storing zero to one byte. Neither result reaches rendering or physics, so
 `TrackFaceAlternateRoute` overstates what is known. The load-time dark red colour is
 real; the meaning is not.
+
+---
+
+# The maintenance craft and the ship's start height
+
+The craft visibly carries the player's ship down onto its pad while the intro
+camera sweeps, then leaves during the countdown. Two things are now settled about
+how that is *not* implemented in retail:
+
+**The countdown does not move the ship.** `maybe_UpdateRaceStartCountdown`
+(`0x800251d0`) only decrements the timer at ship`+0xe0` from `0xa6` and fires SFX at
+counts 125, 83, 41 and 0. There is no position write anywhere in it.
+
+**The ship is placed on its pad from the start.**
+`InitializeRaceShipsAndStartingGrid` sets position to the midpoint of the pad face's
+vertices 0 and 2 plus `normal * 75/1024` -- a few units of clearance, not a hover.
+
+So the descent is a **rendering sequence layered over a ship that is already in its
+final position**, not a simulated drop. Whatever animates it moves the *craft* model
+and presumably draws the ship attached to it until release. That path is still
+unlocated: `maybe_AnimateRescueCraftGlow` (`0x80048d08`) is the only reader of the
+craft's object pointer and it only rewrites primitive colours.
+
+Correction to an earlier note in this file's discussion: a `spawn contact
+distance=300.0` line in the port's startup log was read as evidence the ship spawns
+300 units high. It is not -- that value comes from
+`physics.SampleShipTrackContact`, a diagnostic probe, and `sectionY` is the section
+centre rather than the road surface, so it is not comparable to the ship's Y. There
+is no unexplained spawn elevation.
