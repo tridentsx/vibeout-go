@@ -859,3 +859,29 @@ apiece that is a grid over 50,000 units long. Slot 14 sits 29 sections behind th
 line, and painted pads plausibly only exist near the front of that. If so, a craft in the
 last slot standing on plain road is correct rather than misplaced -- which is worth
 confirming by looking at where the pads actually are in retail before treating it as a bug.
+
+## On the reference implementation, and why it was not adopted
+
+phoboslab's wipeout-rewrite places the grid differently: it walks to `start_line_pos - 15`
+and lays fifteen slots forward with 2, 1, 2, 1 spacing, and it picks the face by indexing
+`face_start + 1` (plus one more on an odd rank) rather than scanning for a flag.
+
+That was briefly ported and then reverted. It is a WipEout 1 implementation, and this
+project has read 2097's own `InitializeRaceShipsAndStartingGrid` in more detail than the
+reference had reason to -- the two unconditional Previous steps per slot, the side flag
+toggling from zero, and the forward scan for a face carrying bit 0x01 all come from that
+function's disassembly. Substituting logic from a different game because it happens to look
+right is how a correct reading gets discarded for a plausible one.
+
+Where the reference is genuinely useful is as a second opinion on **what is uncertain**, and
+it points at the same place this project already identified: the slot. Both agree the player
+takes a slot at one end of the grid and that the face follows from that slot's parity. They
+disagree on how long the grid is, and a fifteen-section grid would put the player far closer
+to the line -- which is consistent with the observation that nothing sits on a painted pad.
+
+So the outstanding work is unchanged and now doubly motivated: **read the permutation at
+0x80022bbc that fills `maybe_GridPositionByShipIndex` instruction by instruction.**
+`gridPosition[0] = 14` was derived by hand from HLIL that splits the table across several
+stack variables, and every remaining discrepancy -- the lane, the distance from the line,
+whether the parity needed inverting at all -- depends on it. It is the one thing that should
+be settled before any further adjustment by eye.
