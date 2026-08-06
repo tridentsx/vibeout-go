@@ -782,3 +782,45 @@ definition.
 
 So the path system is for scenery-like movers -- the rescue craft today, and whatever else
 the per-track waypoints were authored for -- while competitors are simulated as craft.
+
+## Open: the craft starts on the wrong side, and not on a pad
+
+Reported from play: in retail you start on the **right** side of the road at Talon's Reach,
+and the port puts you on the **left**. Neither the player's craft nor the maintenance craft
+sits on a starting pad.
+
+I have flip-flopped on the lane parity once already and do not want to do it again by feel,
+so here is what the code actually says.
+
+`InitializeRaceShipsAndStartingGrid` builds the side flags as `side[i] = a0; a0 ^= 1`
+starting from `a0 = 0`, so even slots get 0. It then advances one face only when the flag is
+set:
+
+```c
+do { f = face->0x0f & 1; face += 0x14; } while (f == 0);
+face -= 0x14;
+if (side[gridPosition] != 0) face += 0x14;
+```
+
+The index is `gridPosition[shipIndex]`, not the ship index. That table is built from the
+`{2,5,8,11,14} - pass` permutation, walked in the order 2,5,8,11,14,1,4,7,10,13,0,3,6,9,12
+and assigning an incrementing counter to `gridPosition[value]`. Value 0 is skipped by the
+loop's own `!= 0` test and `gridPosition[0]` is written afterwards from the final counter,
+which lands on **14**. So the player takes slot 14, an even slot, and therefore the first
+flagged face with no advance -- which is what the port does.
+
+So the port matches the code as read, and the observation says the result is wrong. Three
+things could be responsible and they need distinguishing rather than guessing:
+
+1. **The permutation reading.** `gridPosition[0] = 14` was derived by hand from HLIL that
+   splits the stack table across several variables. If the counter lands elsewhere the slot
+   is different, and slot parity flips the lane.
+2. **Which face is "first".** Retail scans forward from `section->FirstFace`; so does the
+   port. But if the two disagree about face ordering within a section, the same rule picks
+   opposite lanes.
+3. **The pad geometry.** That neither craft is on a pad at all suggests the chosen face is
+   not a pad face, which would make the lane question secondary.
+
+The third is the one to test first, and it is testable without the emulator: dump the
+faces of section 265 with their flags and tile indices, and see which carry pad geometry.
+If no face there is a pad, the fault is upstream of the lane choice.

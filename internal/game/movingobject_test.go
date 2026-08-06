@@ -272,3 +272,25 @@ func TestCraftGlowRearLightsBlinkRed(t *testing.T) {
 		t.Errorf("the rear light varied only %d..%d; it should blink across the range", minR, maxR)
 	}
 }
+
+// The forward axis the path system accelerates along must be (-sin, +cos), since
+// maybe_MovingObjectFlightStateB writes accel = (-sin*cos, ., cos*cos). A renderer that
+// rotates the model the other way makes the object fly one way and point the other.
+func TestForwardAxisHandedness(t *testing.T) {
+	track := fakeTrack{count: 20, pathNode: 5, spacing: 1000}
+	object := &MovingObject{
+		State: MovingObjectHoverLaunch,
+		Timer: MovingObjectClimbBelow,
+		Yaw:   1024, // a quarter turn
+	}
+	object.Advance(track, nil)
+	sin, cos := Angle(1024).Sin(), Angle(1024).Cos()
+	if object.Acceleration.X >= 0 && sin > 0 {
+		t.Errorf("with sin=%v the X acceleration is %v; it must carry the opposite sign",
+			sin, object.Acceleration.X)
+	}
+	if (object.Acceleration.Z > 0) != (cos > 0) {
+		t.Errorf("with cos=%v the Z acceleration is %v; the signs must agree",
+			cos, object.Acceleration.Z)
+	}
+}

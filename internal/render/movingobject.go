@@ -48,10 +48,14 @@ func DrawMovingObject(frame *Frame, camera Camera, object *assets.Object,
 			lx := float32(v.X) - float32(object.Header.Origin.X)
 			ly := float32(v.Y) - float32(object.Header.Origin.Y)
 			lz := float32(v.Z) - float32(object.Header.Origin.Z)
+			// The handedness has to agree with how the path system derives motion, or the
+			// object flies one way and points the other. maybe_MovingObjectFlightStateB
+			// sets acceleration to (-sin*cos, ., cos*cos), so its forward axis is
+			// (-sin, +cos) and the rotation must use that same sign.
 			world := game.Vector3{
-				X: mover.Position.X + lx*cos + lz*sin,
+				X: mover.Position.X + lx*cos - lz*sin,
 				Y: mover.Position.Y + ly,
-				Z: mover.Position.Z - lx*sin + lz*cos,
+				Z: mover.Position.Z + lx*sin + lz*cos,
 			}
 			var uv sdl.FPoint
 			if i < len(polygon.UV) && uvWidth > 0 && uvHeight > 0 {
