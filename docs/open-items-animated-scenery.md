@@ -755,3 +755,30 @@ contradiction in the constants.
 - The vertical controller's slowness is faithful but untested against retail. A P term of
   `delta >> 6` against a 7/8 decay takes hundreds of ticks to close a 3000-unit gap, which
   is correct arithmetic but has not been compared with how quickly the real craft settles.
+
+## Do enemy ships use this system? No.
+
+Worth settling, since the cluster was originally misnamed as AI ship heading and the two
+subsystems sit adjacent in memory around 0x80067xxx.
+
+`maybe_IntegrateMovingObjectPath` has exactly three callers, all inside the path cluster
+itself: the two flight states and the chain reset. Nothing in the AI calls it. The entity
+struct at `maybe_MovingObjectState` (`0x800be420`) is referenced only by
+`maybe_RaceMain`, never by an AI function.
+
+Enemy ships are ordinary ships. They occupy the `0xf0`-stride array at
+`maybe_TrackPropArray` and run the same physics as the player, with the AI supplying input
+instead of a pad. `maybe_UpdateAiShipTacticalBehavior` -- 7488 bytes, reached only through
+a function pointer -- calls a wholly different set: `maybe_GrantWeaponToShip`,
+`ProjectPointOntoLineThroughPoints`, `PlaneDistanceToTrackFace`, `SquareRoot0`. It reasons
+about racing lines and weapons, not waypoint paths.
+
+The one thing the two do share is the section flag. `SectionFlagPathStart` (bit 0x01) is
+read by the AI's tactical update at five sites as well as by the path system, by
+`maybe_IntegrateShipPhysics` and by `SceneRadiusCheck`. So the flag marks something about
+a section that several subsystems care about, and calling it a path-start flag names only
+the use that was traced first. That is worth remembering before treating the name as a
+definition.
+
+So the path system is for scenery-like movers -- the rescue craft today, and whatever else
+the per-track waypoints were authored for -- while competitors are simulated as craft.
