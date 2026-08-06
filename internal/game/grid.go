@@ -192,6 +192,10 @@ func normalGridOffset(normal int16) int32 {
 	return int32((int64(normal) * 75) >> 10)
 }
 
+// AngleFromDirection is the yaw retail derives with `-ratan2(dx, dz)`, used for the
+// starting grid and for aiming trackside objects along the track.
+func AngleFromDirection(dx, dz int32) Angle { return angleFromGridDirection(dx, dz) }
+
 func angleFromGridDirection(dx, dz int32) Angle {
 	radians := -math.Atan2(float64(dx), float64(dz))
 	units := int64(math.Round(radians * float64(AngleFullTurn) / (2 * math.Pi)))

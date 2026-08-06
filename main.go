@@ -72,6 +72,20 @@ func main() {
 		}
 	}()
 
+	// COMMON/LIGHT.PRM is the start light gantry: one object, `light1`, 63 polygons of
+	// which 29 are type 4. Retail instantiates it three times and tints the first
+	// eight type-4 primitives of each per countdown phase.
+	var gantry *assets.Object
+	var gantryTextures []*sdl.GPUTexture
+	var gantryPages []*assets.Image
+	if gantryModel, gantryErr := loader.LoadModel("COMMON", "LIGHT.PRM"); gantryErr == nil {
+		gantry = gameRender.FindObject(gantryModel.Objects, "light1")
+		gantryTextures = device.NewTextures(gantryModel.Pages)
+		gantryPages = gantryModel.Pages
+	} else {
+		log.Printf("start light gantry unavailable: %v", gantryErr)
+	}
+
 	// Race assets are rebuilt whenever a race starts, so the front end's track and
 	// team choices take effect. Everything here was previously loaded once at
 	// startup, which pinned the game to TRACK01 and the Feisar craft.
@@ -131,6 +145,11 @@ func main() {
 
 	ship := &game.Ship{ControlSource: game.ControlLocalPlayer, Flags: 0x248}
 	var camera *gameRender.RaceCamera
+	lights := game.NewStartLightState()
+	// The now-playing banner flashes at race start. Retail resolves the track through
+	// the shuffled order when the music selection is RANDOM.
+	nowPlaying := ""
+	nowPlayingTicks := 0
 
 	// spawnShip places the craft on the grid of the currently loaded track and builds
 	// the race camera for it. Called on every race entry, not just at startup.
@@ -447,6 +466,11 @@ func main() {
 				accumulator -= tick
 				continue
 			}
+			// The countdown drives the gantry and the start tones.
+			lights.Tick()
+			if nowPlayingTicks > 0 {
+				nowPlayingTicks--
+			}
 			accelerate := keys.accelerate || pad.IsDown(controller.Accelerate)
 			left := keys.left || pad.IsDown(controller.SteerLeft)
 			right := keys.right || pad.IsDown(controller.SteerRight)
@@ -552,6 +576,15 @@ func main() {
 			trackRenderer.DrawSceneryPerspectiveAnimated(frame, camera.Camera, 1280, 720, sceneryAnim)
 			if camera.View == gameRender.CameraExternal {
 				gameRender.DrawShipPerspective(frame, camera.Camera, ship, craft, craftTextures, craftModel.Pages, 1280, 720)
+			}
+			// Three gantries near the start line, tinted by the countdown phase.
+			if gantry != nil {
+				gameRender.DrawStartLightGantries(frame, camera.Camera, track,
+					states.Context.TrackID, gantry, gantryTextures, gantryPages, lights, 1280, 720)
+			}
+			ui.BeginTextBand()
+			if nowPlayingTicks > 0 && nowPlaying != "" {
+				ui.DrawTextCentered(frame, nowPlaying, gameRender.RetailWidth/2, 40, gameRender.White)
 			}
 			if states.IsDemo() {
 				ui.DrawTextCentered(frame, "DEMO MODE", gameRender.RetailWidth/2, 20, gameRender.White)
