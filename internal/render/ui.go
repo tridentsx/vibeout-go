@@ -138,8 +138,31 @@ func (u *UI) DrawImage(f *Frame, tex *sdl.GPUTexture, x, y, w, h int, col sdl.FC
 	u.quad(f, tex, float32(x), float32(y), float32(w), float32(h), 0, 0, 1, 1, 1, 1, col)
 }
 
-// DrawFullscreenImage stretches a texture over the whole framebuffer, which is what
-// the boot splash TIMs need.
+// DrawFullscreenImage stretches a texture over the whole framebuffer.
 func (u *UI) DrawFullscreenImage(f *Frame, tex *sdl.GPUTexture) {
 	u.DrawImage(f, tex, 0, 0, RetailWidth, RetailHeight, White)
+}
+
+// DrawSplash fills the framebuffer from a boot TIM, taking only the leftmost
+// retail-sized region when the image is wider.
+//
+// WARNING.TIM is 640x256 where COPY2097.TIM, REDBPAL.TIM and STARTPAL.TIM are all
+// 320x256, the PAL framebuffer size. Stretching the wide one across the screen would
+// squeeze two half-images together, so it is cropped instead. What the right-hand
+// half of that image is for has not been established -- a second language or region
+// variant is the obvious guess, but it is only a guess.
+func (u *UI) DrawSplash(f *Frame, tex *sdl.GPUTexture, texW, texH int) {
+	if tex == nil || texW <= 0 || texH <= 0 {
+		return
+	}
+	srcW := float32(texW)
+	if texW > RetailWidth {
+		srcW = RetailWidth
+	}
+	srcH := float32(texH)
+	if texH > RetailHeight {
+		srcH = RetailHeight
+	}
+	u.quad(f, tex, 0, 0, RetailWidth, RetailHeight,
+		0, 0, srcW, srcH, float32(texW), float32(texH), White)
 }

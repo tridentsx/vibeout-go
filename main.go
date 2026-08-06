@@ -177,12 +177,20 @@ func main() {
 	states := game.NewStateMachine()
 	// Boot splash textures, uploaded once. A missing file is not fatal: the state
 	// machine still holds for the retail duration, just on black.
-	splashTextures := make([]*sdl.GPUTexture, len(game.BootSplashes))
+	type splashImage struct {
+		tex  *sdl.GPUTexture
+		w, h int
+	}
+	splashTextures := make([]splashImage, len(game.BootSplashes))
 	for i, splash := range game.BootSplashes {
 		dir, file := path.Split(splash.Texture)
 		img, imgErr := loader.LoadTIM(path.Clean(dir), file)
 		if imgErr != nil {
-			log.Printf("boot splash %s unavailable: %v", splash.Texture, imgErr)
+			// Expected for DOLBYPAL.TIM: the executable asks for it but no PAL disc
+			// carries it, so retail's load fails too and the previous image stays on
+			// screen for that slot's duration. Leaving the entry nil reproduces that,
+			// because the draw path falls back to the last texture it showed.
+			log.Printf("boot splash %s not on this disc; holding the previous screen", splash.Texture)
 			continue
 		}
 		tex, texErr := device.NewTexture(img.Width, img.Height, img.Pixels)
@@ -190,11 +198,15 @@ func main() {
 			log.Printf("boot splash %s upload failed: %v", splash.Texture, texErr)
 			continue
 		}
-		splashTextures[i] = tex
+		splashTextures[i] = splashImage{tex: tex, w: img.Width, h: img.Height}
 	}
 	// Start is edge-triggered: the state machine debounces, but a held key must not
 	// read as a fresh press on the next screen.
 	startPressed := false
+	// lastSplash holds the most recent splash actually drawn, so a slot whose image
+	// is absent from the disc keeps the previous screen rather than flashing black.
+	var lastSplashTex *sdl.GPUTexture
+	var lastSplashW, lastSplashH int
 
 	accumulator := time.Duration(0)
 	physicsTicks := uint64(0)
@@ -326,9 +338,13 @@ func main() {
 		switch states.State() {
 		case game.StateBootSplash:
 			ui.FillScreen(frame, sdl.FColor{A: 1})
-			if i := states.SplashIndex(); i >= 0 && splashTextures[i] != nil {
-				ui.DrawFullscreenImage(frame, splashTextures[i])
+			// A missing image holds whatever was last shown, which is what retail does:
+			// LoadTIMTexture fails and nothing clears the framebuffer.
+			if i := states.SplashIndex(); i >= 0 && splashTextures[i].tex != nil {
+				lastSplashTex = splashTextures[i].tex
+				lastSplashW, lastSplashH = splashTextures[i].w, splashTextures[i].h
 			}
+			ui.DrawSplash(frame, lastSplashTex, lastSplashW, lastSplashH)
 		case game.StateBootOverlay, game.StatePostRaceOverlay:
 			// Overlays are separate PS-EXEs running FMV, which a port cannot execute.
 			// Show the name on black until video playback exists.
