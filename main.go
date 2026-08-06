@@ -208,6 +208,22 @@ func main() {
 		log.Printf("start line section %d; craft in grid slot %d of %d at section %d",
 			lineSection, gridSlot, gridSlots, ship.SectionID)
 		camera = gameRender.NewRaceCamera(ship, track.Sections)
+		// Install the retail presentation callback before the first frame, so the race
+		// opens with the starting-grid camera arc and hands off to the chase camera.
+		camera.BeginRaceStart()
+		lights = game.NewStartLightState()
+		// The maintenance craft spawns above the player and follows the circuit's own
+		// waypoints.
+		mover = game.SpawnMovingObject(pathfinder, ship, 0x1e)
+		craftGlow = &game.CraftGlow{}
+		// Resolve the music selection the way maybe_UpdateShipRaceRankAndAI does and
+		// flash the banner it builds.
+		selection := int(ctx.MusicSelection)
+		if selection == game.MusicSelectionRandom {
+			selection = 2
+		}
+		nowPlaying = game.NowPlaying(selection)
+		nowPlayingTicks = game.NowPlayingBannerTicks
 		return nil
 	}
 
