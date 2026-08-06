@@ -51,51 +51,17 @@ func main() {
 	log.Printf("frame capture: http://127.0.0.1:8097/frame.png")
 
 	loader := assets.Loader{Root: wipeoutDiscPath}
-	track, err := loader.LoadTrack("TRACK01")
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, warning := range track.Warnings {
-		log.Printf("optional track asset: %v", warning)
-	}
-	trackRenderer, err := gameRender.NewTrackRenderer(device, track, 1280, 720)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer trackRenderer.Destroy()
 
-	// Animated scenery: fans spin, billboards and smoke cycle texture frames.
-	// TRACK01 is menu index 0, which maps to internal track ID 1 -- the only ID
-	// whose object bindings have been read out of the retail dispatch chain, and
-	// the one that has fans and smoke. See internal/render/scenery_anim.go.
-	sceneryAnim := gameRender.BindAnimatedScenery(gameRender.MenuIndexToTrackID[0], track.Scenery)
-	log.Printf("animated scenery: %d fan(s), %d slow smoke, %d fast smoke, %d billboard(s), %d camera(s)",
-		len(sceneryAnim.Fans), len(sceneryAnim.SmokeSlow), len(sceneryAnim.SmokeFast),
-		len(sceneryAnim.Billboards), len(sceneryAnim.Cameras))
-	// Frame textures come from TEXTURES/SMOKE.CMP and TEXTURES/<set>RED.CMP, not
-	// from the track's SCENE.CMP.
-	if err := sceneryAnim.LoadFrameTextures(device, loader, gameRender.MenuIndexToTrackID[0]); err != nil {
-		log.Printf("optional animation textures: %v", err)
-	}
-	log.Printf("animation frames: %d smoke, %d billboard",
-		len(sceneryAnim.SmokeTextures), len(sceneryAnim.BillboardTextures))
-
-	// TERRY.PRM holds the five real per-team craft hulls (confirmed against a
-	// real PRM viewer): quirex1/fiesar1/auricom2/ag1/piranha2, matching the
-	// five team names in the executable's own strings (QIREX/FEISAR/AURICOM/
-	// AG SYSTEMS/PIRANHA). VECTO.PRM's standalone "vect" and HARRY.PRM's
-	// bundled "vect"/"ven"/"rap"/"phant" are menu class-select icons, not
-	// this craft. This preview defaults to the FEISAR team ("fiesar1").
+	// TERRY.PRM holds the five real per-team craft hulls:
+	// quirex1/fiesar1/auricom2/ag1/piranha2, matching the five team names in the
+	// executable's own strings. It is shared by the menu and the race, and is the
+	// same file maybe_InitTrackPropPools clones to build the fifteen-ship field.
 	craftModel, err := loader.LoadModel("COMMON", "TERRY.PRM")
 	if err != nil || len(craftModel.Objects) == 0 {
 		log.Fatalf("load player craft: objects=%d err=%v", len(craftModel.Objects), err)
 	}
 	for _, warning := range craftModel.Warnings {
 		log.Printf("optional craft asset: %v", warning)
-	}
-	craft := gameRender.FindObject(craftModel.Objects, "fiesar1")
-	if craft == nil {
-		log.Fatal("load player craft: TERRY.PRM has no \"fiesar1\" object")
 	}
 	craftTextures := device.NewTextures(craftModel.Pages)
 	defer func() {
@@ -106,45 +72,108 @@ func main() {
 		}
 	}()
 
-	ship := &game.Ship{ControlSource: game.ControlLocalPlayer, Flags: 0x248}
-	spec, err := game.RaceShipSpec(0, 0)
-	if err != nil {
-		log.Fatal(err)
-	}
-	game.ApplyRaceShipSpec(ship, spec)
-	// The craft starts on the grid, not on the line: the grid is the run of
-	// sections flagged TrackFaceStartGrid (290-319 on TRACK01), while the
-	// per-track table gives the start/finish line (section 5 there).
-	// The grid is walked backwards from the start/finish line. A lone craft in a
-	// single race starts in the last slot; other modes resolve the slot from
-	// qualifying or standings. The slot also picks which side of the road the craft
-	// sits on, so it must be passed through rather than flattened to zero.
-	trackID := gameRender.MenuIndexToTrackID[0]
-	lineSection := game.TrackStartLineSection[trackID]
-	const gridSlots = 15
-	gridSlot := game.PlayerGridSlot(gridSlots)
-	log.Printf("start line at section %d; craft in grid slot %d of %d", lineSection, gridSlot, gridSlots)
-	if err := game.PlaceShipOnStartingGrid(ship, track, lineSection, gridSlot); err != nil {
-		log.Fatal(err)
-	}
-	physics.UpdateShipOrientationVectors(ship)
-	if err := physics.UpdateShipTrackFaceSide(ship, track); err != nil {
-		log.Fatal(err)
-	}
-	initialSideFlag := ship.Flags & game.ShipFlagTrackFaceSide
-	for _, sideFlag := range []uint32{0, game.ShipFlagTrackFaceSide} {
-		ship.Flags = ship.Flags&^game.ShipFlagTrackFaceSide | sideFlag
-		if sample, sampleErr := physics.SampleShipTrackContact(ship, track); sampleErr == nil {
-			log.Printf("spawn contact side=%#x face=%d distance=%.1f forwardDistance=%.1f normal=(%.4f,%.4f,%.4f) sectionY=%.1f",
-				sideFlag, sample.FaceIndex, sample.CenterDistance, sample.ForwardDistance, sample.Normal.X, sample.Normal.Y, sample.Normal.Z, sample.SectionY)
+	// Race assets are rebuilt whenever a race starts, so the front end's track and
+	// team choices take effect. Everything here was previously loaded once at
+	// startup, which pinned the game to TRACK01 and the Feisar craft.
+	var track *assets.Track
+	var trackRenderer *gameRender.TrackRenderer
+	var sceneryAnim *gameRender.AnimatedScenery
+	var craft *assets.Object
+	loadedTrackID := uint8(0)
+
+	loadRace := func(ctx *game.GameContext) error {
+		dir, ok := game.TrackDirectories[ctx.TrackID]
+		if !ok {
+			return fmt.Errorf("no directory for track id %d", ctx.TrackID)
 		}
+		loaded, loadErr := loader.LoadTrack(dir)
+		if loadErr != nil {
+			return fmt.Errorf("loading %s: %w", dir, loadErr)
+		}
+		for _, warning := range loaded.Warnings {
+			log.Printf("optional track asset: %v", warning)
+		}
+		renderer, rendErr := gameRender.NewTrackRenderer(device, loaded, 1280, 720)
+		if rendErr != nil {
+			return fmt.Errorf("track renderer for %s: %w", dir, rendErr)
+		}
+		// Release the previous track's GPU resources only once the new ones exist, so
+		// a failure leaves the running race intact.
+		if trackRenderer != nil {
+			trackRenderer.Destroy()
+		}
+		track, trackRenderer = loaded, renderer
+		loadedTrackID = ctx.TrackID
+
+		// Animated scenery bindings are per internal track id. Only id 1 has been read
+		// out of the retail dispatch chain, so other tracks bind nothing and simply
+		// have static scenery.
+		sceneryAnim = gameRender.BindAnimatedScenery(ctx.TrackID, track.Scenery)
+		if err := sceneryAnim.LoadFrameTextures(device, loader, ctx.TrackID); err != nil {
+			log.Printf("optional animation textures: %v", err)
+		}
+		log.Printf("track %s (%s, id %d): %d fan(s), %d smoke, %d billboard(s), %d camera(s)",
+			dir, game.TrackInternalNames[ctx.TrackID], ctx.TrackID,
+			len(sceneryAnim.Fans), len(sceneryAnim.SmokeSlow)+len(sceneryAnim.SmokeFast),
+			len(sceneryAnim.Billboards), len(sceneryAnim.Cameras))
+
+		teams := ctx.Teams()
+		craftObject := "fiesar1"
+		if int(ctx.TeamIndex) < len(teams) {
+			craftObject = teams[ctx.TeamIndex].Object
+		}
+		craft = gameRender.FindObject(craftModel.Objects, craftObject)
+		if craft == nil {
+			return fmt.Errorf("TERRY.PRM has no %q object", craftObject)
+		}
+		return nil
 	}
-	ship.Flags = ship.Flags&^game.ShipFlagTrackFaceSide | initialSideFlag
-	camera := gameRender.NewRaceCamera(ship, track.Sections)
-	// Race setup installs the retail presentation callback before the first
-	// frame. Keep this enabled in the validation preview so the captured
-	// frames exercise the authentic starting-grid camera arc and handoff.
-	camera.BeginRaceStart()
+
+	ship := &game.Ship{ControlSource: game.ControlLocalPlayer, Flags: 0x248}
+	var camera *gameRender.RaceCamera
+
+	// spawnShip places the craft on the grid of the currently loaded track and builds
+	// the race camera for it. Called on every race entry, not just at startup.
+	spawnShip := func(ctx *game.GameContext) error {
+		spec, specErr := game.RaceShipSpec(0, 0)
+		if specErr != nil {
+			return specErr
+		}
+		*ship = game.Ship{ControlSource: game.ControlLocalPlayer, Flags: 0x248}
+		game.ApplyRaceShipSpec(ship, spec)
+		// The grid is walked backwards from the start/finish line. A lone craft in a
+		// single race starts in the last slot; the slot also picks which side of the
+		// road it sits on.
+		lineSection, ok := game.TrackStartLineSection[ctx.TrackID]
+		if !ok {
+			return fmt.Errorf("no start line section for track id %d", ctx.TrackID)
+		}
+		const gridSlots = 15
+		gridSlot := game.PlayerGridSlot(gridSlots)
+		if err := game.PlaceShipOnStartingGrid(ship, track, lineSection, gridSlot); err != nil {
+			return err
+		}
+		physics.UpdateShipOrientationVectors(ship)
+		if err := physics.UpdateShipTrackFaceSide(ship, track); err != nil {
+			return err
+		}
+		log.Printf("start line section %d; craft in grid slot %d of %d at section %d",
+			lineSection, gridSlot, gridSlots, ship.SectionID)
+		camera = gameRender.NewRaceCamera(ship, track.Sections)
+		return nil
+	}
+
+	// Load the opening track so the first frames have something valid, and so a demo
+	// race triggered by the title timeout works without passing through the menu.
+	states := game.NewStateMachine()
+	// Menu index 0 is Talon's Reach, internal id 1.
+	states.Context.Normalise(gameRender.MenuIndexToTrackID[:])
+	if err := loadRace(&states.Context); err != nil {
+		log.Fatal(err)
+	}
+	if err := spawnShip(&states.Context); err != nil {
+		log.Fatal(err)
+	}
 	traceFile, err := os.Create("camera_trace.log")
 	if err != nil {
 		log.Fatal(err)
@@ -174,7 +203,6 @@ func main() {
 		log.Fatal(err)
 	}
 	defer ui.Destroy()
-	states := game.NewStateMachine()
 	menu := game.NewMenuCursor()
 	// Boot splash textures, uploaded once. A missing file is not fatal: the state
 	// machine still holds for the retail duration, just on black.
@@ -383,9 +411,31 @@ func main() {
 					if menuActivate {
 						if menu.Activate(&states.Context) == game.ActionStartRace {
 							states.Context.Normalise(gameRender.MenuIndexToTrackID[:])
-							log.Printf("start: track %s (id %d), class %d",
+							log.Printf("start: %s, %s class, team %s",
 								game.TrackMenuEntries[states.Context.MenuTrackIndex].Name,
-								states.Context.TrackID, states.Context.SpeedClass)
+								game.Screens[game.ScreenClass].Items[states.Context.SpeedClass].Label,
+								states.Context.Teams()[states.Context.TeamIndex].Name)
+							// Only rebuild the track when the choice actually changed; the
+							// craft and grid are always respawned.
+							if states.Context.TrackID != loadedTrackID {
+								if err := loadRace(&states.Context); err != nil {
+									log.Printf("cannot start: %v", err)
+									menuMove, menuHorizontal, menuActivate, menuBack = 0, 0, false, false
+									accumulator -= tick
+									continue
+								}
+							} else if teams := states.Context.Teams(); int(states.Context.TeamIndex) < len(teams) {
+								// The track is unchanged but the craft may not be.
+								if obj := gameRender.FindObject(craftModel.Objects, teams[states.Context.TeamIndex].Object); obj != nil {
+									craft = obj
+								}
+							}
+							if err := spawnShip(&states.Context); err != nil {
+								log.Printf("cannot start: %v", err)
+								menuMove, menuHorizontal, menuActivate, menuBack = 0, 0, false, false
+								accumulator -= tick
+								continue
+							}
 							states.FrontEndResult(int(states.Context.TrackID))
 						}
 					}
