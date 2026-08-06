@@ -308,3 +308,26 @@ The release coinciding with the camera handover at `0x64` is a strong hint that 
 condition drives both. The player's physics must be suppressed above `0x64`, or the
 ship would fall from +300 immediately; that suppression has not been located and is
 not the `0x1f4` path above.
+
+## Correction: the craft's animation phase is an accumulator
+
+`maybe_AnimateRescueCraftGlow` was described above as using three *fixed* sine phases
+(`0x8c`, `0x4b`, `0x20`). That was wrong. The disassembly is a read-modify-write:
+
+```asm
+lhu   $v0, 938($gp)      ; g_80094cba
+addiu $v0, $v0, 140      ; += 0x8c
+sh    $v0, 938($gp)
+jal   GetSin
+sra   $v0, $v0, 5        ; >> 5
+addiu $v0, $v0, 128      ; + 0x80
+```
+
+so the phase advances **0x8c per tick** and the samples oscillate. BN's HLIL rendered
+the store as `g_80094cba = 0x8c` and it was read as a constant assignment.
+
+That rate is close to the `0xc8` per tick that `maybe_AimAndBobCameraObjects` uses for
+its trackside camera bob, and the craft is observed to bob vertically in play. So the
+function may well drive position as well as primitive colour, and the name is too
+narrow. Checking whether it writes the node translation is now the first thing to do
+rather than assuming, as was assumed here, that it is colour only.
