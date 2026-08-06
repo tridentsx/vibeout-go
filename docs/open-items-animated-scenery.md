@@ -632,3 +632,76 @@ during the sweep and −8385 to −9399 at departure. If it were simply seeking
 `waypoint->y - 0xbb8` throughout, the altitude would be roughly constant relative to the
 road, so the climb suggests the departure phase overrides the seek or targets a much
 higher point.
+
+## The complete specification
+
+Both states are now read end to end, and the two gaps are closed. Static reading did in
+minutes what the emulator could not land at all, because the phases are keyed to a timer
+rather than to anything observable at a paused frame.
+
+### State A: hover, then launch
+
+Timer starts at `0x320` (800) and counts down one per update. Because the handover fires
+at `0x1f4` (500), the branch below `0x190` is never reached from this state.
+
+| timer | behaviour |
+|---|---|
+| 800 → 771 | yaw tracks the player's ship (`entity->yaw = ship->0x70`) |
+| **770** | one-off impulse: `accel.y -= 0x5a` |
+| 769 → 710 | yaw tracks the ship again |
+| 709 → 500 | `accel.y = -0x8c`, pitch `-8`, horizontal accel shifted `>> 0xf` |
+| **500** | hand over |
+
+At handover it resets the timer to `0x320`, switches to state B, and **snaps its position**
+to the current waypoint:
+
+```c
+position.x = waypoint->x;
+position.y = waypoint->y - 0x1388;   // 5000 above the track
+position.z = waypoint->z;
+```
+
+Negative Y being up, `accel.y = -0x8c` is a **climb**. So the craft hovers with the ship,
+takes a kick at 770, climbs for eight seconds, then jumps to 5000 above its first
+waypoint. That accounts for the measured altitude: Y −423 while hovering during the sweep
+against −8385 to −9399 later.
+
+### State B: seek the waypoint
+
+Target is the midpoint of the current waypoint section and that section's Next, held
+`0xbb8` (3000) above the track. Horizontal acceleration is a unit vector from the heading,
+vertical is `delta.y >> 6`. The turn direction is whichever of two candidates is shorter.
+
+**There is no proximity advance.** The transition out is triggered externally, by bit
+`0x400` of the ship's flag word at `ship + 0xc`:
+
+```c
+if (ship->0xc & 0x400) {
+    entity->nextState = ResetPathChain;
+    entity->timer     = 0x320;
+    playSound(...);
+    ship->0xc |= 2;
+    g_8009563c = maybe_UpdateWeaponCrateOrbitNodeAlt;   // replaces the camera callback
+    hud->4 = (shipSection->0x96 & 1) ? shipSection->Next : shipSection;
+}
+```
+
+That it installs a camera callback settles what this system is for: it is the **mid-race
+rescue**, not only the race start. Ship flag `0x400` is the request. Which ties together
+three things already found separately — `RESCU.PRM`'s name, the `0x1f4` timer in
+`maybe_IntegrateShipPhysicsFromPadInput` that zeroes a ship's velocity and rewinds its
+section, and this camera swap.
+
+### The integrator
+
+```c
+velocity += accel;
+velocity -= velocity >> 3;    // decay
+position += velocity >> 6;    // apply
+```
+
+### Enough to implement
+
+Nothing essential is now missing. The remaining uncertainty is cosmetic: whether the snap
+at timer 500 is visible in play, or whether the craft is off-camera by then. Worth
+checking by eye once implemented rather than reversed further.
