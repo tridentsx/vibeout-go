@@ -86,6 +86,22 @@ func main() {
 		log.Printf("start light gantry unavailable: %v", gantryErr)
 	}
 
+	// COMMON/RESCU.PRM is the maintenance craft. Its object is named "grid2", not
+	// "rescu", so it cannot be found by the filename.
+	var rescueCraft *assets.Object
+	var rescueTextures []*sdl.GPUTexture
+	var rescuePages []*assets.Image
+	if rescueModel, rescueErr := loader.LoadModel("COMMON", "RESCU.PRM"); rescueErr == nil {
+		rescueCraft = gameRender.FindObject(rescueModel.Objects, "grid2")
+		rescueTextures = device.NewTextures(rescueModel.Pages)
+		rescuePages = rescueModel.Pages
+		if rescueCraft == nil {
+			log.Printf("RESCU.PRM has no \"grid2\" object")
+		}
+	} else {
+		log.Printf("maintenance craft unavailable: %v", rescueErr)
+	}
+
 	// Race assets are rebuilt whenever a race starts, so the front end's track and
 	// team choices take effect. Everything here was previously loaded once at
 	// startup, which pinned the game to TRACK01 and the Feisar craft.
@@ -93,6 +109,9 @@ func main() {
 	var trackRenderer *gameRender.TrackRenderer
 	var sceneryAnim *gameRender.AnimatedScenery
 	var craft *assets.Object
+	// The maintenance craft's waypoints come from the track's own sections, so this is
+	// rebuilt with the track rather than supplied by the port.
+	var pathfinder game.TrackPathfinder
 	loadedTrackID := uint8(0)
 
 	loadRace := func(ctx *game.GameContext) error {
@@ -126,6 +145,14 @@ func main() {
 		if err := sceneryAnim.LoadFrameTextures(device, loader, ctx.TrackID); err != nil {
 			log.Printf("optional animation textures: %v", err)
 		}
+		// Waypoints come from the sections flagged psx.SectionFlagPathStart. Two circuits
+		// carry none, in which case retail's search runs to its bound.
+		views := make([]game.TrackSectionView, len(track.Sections))
+		for i, sec := range track.Sections {
+			views[i] = game.TrackSectionView{X: sec.X, Y: sec.Y, Z: sec.Z, Next: sec.Next, Flags: sec.Flags}
+		}
+		pathfinder = game.TrackPathfinder{Sections: views}
+		log.Printf("track %s: %d path waypoint(s) %v", dir, len(pathfinder.PathNodes()), pathfinder.PathNodes())
 		log.Printf("track %s (%s, id %d): %d fan(s), %d smoke, %d billboard(s), %d camera(s)",
 			dir, game.TrackInternalNames[ctx.TrackID], ctx.TrackID,
 			len(sceneryAnim.Fans), len(sceneryAnim.SmokeSlow)+len(sceneryAnim.SmokeFast),
@@ -146,6 +173,8 @@ func main() {
 	ship := &game.Ship{ControlSource: game.ControlLocalPlayer, Flags: 0x248}
 	var camera *gameRender.RaceCamera
 	lights := game.NewStartLightState()
+	var mover *game.MovingObject
+	craftGlow := &game.CraftGlow{}
 	// The now-playing banner flashes at race start. Retail resolves the track through
 	// the shuffled order when the music selection is RANDOM.
 	nowPlaying := ""
@@ -468,6 +497,10 @@ func main() {
 			}
 			// The countdown drives the gantry and the start tones.
 			lights.Tick()
+			if mover != nil {
+				mover.Advance(pathfinder, ship)
+				craftGlow.Tick()
+			}
 			if nowPlayingTicks > 0 {
 				nowPlayingTicks--
 			}
@@ -576,6 +609,10 @@ func main() {
 			trackRenderer.DrawSceneryPerspectiveAnimated(frame, camera.Camera, 1280, 720, sceneryAnim)
 			if camera.View == gameRender.CameraExternal {
 				gameRender.DrawShipPerspective(frame, camera.Camera, ship, craft, craftTextures, craftModel.Pages, 1280, 720)
+			}
+			if mover != nil && rescueCraft != nil {
+				gameRender.DrawMovingObject(frame, camera.Camera, rescueCraft,
+					rescueTextures, rescuePages, mover, craftGlow, 1280, 720)
 			}
 			// Three gantries near the start line, tinted by the countdown phase.
 			if gantry != nil {

@@ -217,3 +217,58 @@ func TestIntegratorDecays(t *testing.T) {
 		t.Errorf("decay ratio is %v, want 7/8", ratio)
 	}
 }
+
+// The waypoints must come from the circuit's own data, so a real track's flagged sections
+// are what the pathfinder reports. Vostok Island has six, Talon's Reach none.
+func TestPathfinderReadsTrackData(t *testing.T) {
+	// Build the view the way main does, from the section fields.
+	vostok := TrackPathfinder{Sections: []TrackSectionView{
+		{Next: 1}, {Next: 2, Flags: 0x01}, {Next: 3}, {Next: 0, Flags: 0x21},
+	}}
+	nodes := vostok.PathNodes()
+	if len(nodes) != 2 || nodes[0] != 1 || nodes[1] != 3 {
+		t.Errorf("path nodes are %v, want [1 3]", nodes)
+	}
+	// 0x21 is both a path node and whatever 0x20 marks, as two of Vostok's sections are.
+	if !vostok.IsPathNode(3) {
+		t.Error("0x21 must count as a path node")
+	}
+	// A circuit with none must report none rather than failing.
+	bare := TrackPathfinder{Sections: []TrackSectionView{{Next: 1}, {Next: 0}}}
+	if got := bare.PathNodes(); len(got) != 0 {
+		t.Errorf("a circuit with no flags reported %v", got)
+	}
+	if w := FindFirstWaypoint(bare); w < 0 || w >= 2 {
+		t.Errorf("the search returned %d, outside the range", w)
+	}
+}
+
+// The craft's rear lights must be the red group, and they must actually vary.
+func TestCraftGlowRearLightsBlinkRed(t *testing.T) {
+	glow := &CraftGlow{}
+	var minR, maxR uint8 = 255, 0
+	for tick := 0; tick < 64; tick++ {
+		colors := glow.Colors()
+		rear := colors[CraftPrimitiveCount-1]
+		if rear.G != CraftGlowDim || rear.B != CraftGlowDim {
+			t.Fatalf("tick %d: the rear light is not red-only: %+v", tick, rear)
+		}
+		if rear.R < minR {
+			minR = rear.R
+		}
+		if rear.R > maxR {
+			maxR = rear.R
+		}
+		// The front group is green and the middle blue.
+		if colors[0].G == CraftGlowDim {
+			t.Fatalf("tick %d: the front group should modulate green", tick)
+		}
+		if colors[3].B < colors[3].R {
+			t.Fatalf("tick %d: the middle group should be blue-dominant", tick)
+		}
+		glow.Tick()
+	}
+	if maxR-minR < 100 {
+		t.Errorf("the rear light varied only %d..%d; it should blink across the range", minR, maxR)
+	}
+}
