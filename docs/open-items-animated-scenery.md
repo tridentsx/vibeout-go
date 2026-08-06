@@ -649,7 +649,7 @@ at `0x1f4` (500), the branch below `0x190` is never reached from this state.
 | 800 → 771 | yaw tracks the player's ship (`entity->yaw = ship->0x70`) |
 | **770** | one-off impulse: `accel.y -= 0x5a` |
 | 769 → 710 | yaw tracks the ship again |
-| 709 → 500 | `accel.y = -0x8c`, pitch `-8`, horizontal accel shifted `>> 0xf` |
+| 709 → 500 | `accel.y = -0x8c`, **yaw rate `-8`**, horizontal accel shifted `>> 0xf` |
 | **500** | hand over |
 
 At handover it resets the timer to `0x320`, switches to state B, and **snaps its position**
@@ -661,10 +661,24 @@ position.y = waypoint->y - 0x1388;   // 5000 above the track
 position.z = waypoint->z;
 ```
 
-Negative Y being up, `accel.y = -0x8c` is a **climb**. So the craft hovers with the ship,
-takes a kick at 770, climbs for eight seconds, then jumps to 5000 above its first
-waypoint. That accounts for the measured altitude: Y −423 while hovering during the sweep
+`+0x3e` is a **yaw rate**, not a pitch: the integrator does
+`yaw += *(entity + 0x3e)` and wraps the result through `maybe_WrapAngleSigned`. So the
+`-8` in that phase is a steady turn, not a nose-down attitude. Negative Y being up,
+`accel.y = -0x8c` is a **climb**.
+
+Together those give exactly what is seen in play: the craft rises, moves forward along
+its frozen heading, and curves steadily to one side until it leaves the screen. An
+earlier version of this table called `+0x3e` a pitch, which would have produced a
+straight climb with no turn.
+
+That accounts for the measured altitude too: Y −423 while hovering during the sweep
 against −8385 to −9399 later.
+
+**The snap is never visible.** State A runs 800 down to 500, which is 300 ticks or twelve
+seconds, while the whole race countdown is 166 ticks. So the visible start plays out with
+the timer between 800 and about 634, and the craft has long left the screen before the
+handover at 500. Nothing needs to hide the teleport; the sequence simply outlasts the
+part anyone watches.
 
 ### State B: seek the waypoint
 
