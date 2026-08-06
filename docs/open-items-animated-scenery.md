@@ -212,19 +212,29 @@ how that is *not* implemented in retail:
 (`0x800251d0`) only decrements the timer at ship`+0xe0` from `0xa6` and fires SFX at
 counts 125, 83, 41 and 0. There is no position write anywhere in it.
 
-**The ship is placed on its pad from the start.**
+**The ship is placed 300 units *above* its pad.**
 `InitializeRaceShipsAndStartingGrid` sets position to the midpoint of the pad face's
-vertices 0 and 2 plus `normal * 75/1024` -- a few units of clearance, not a hover.
+vertices 0 and 2 plus `(normal * 0x4b) >> 0xa`. Normals are 4096-scaled, so on flat
+road that term is `4096 * 75 / 1024` = **300 world units** of clearance, not a few.
+Measured on TRACK01 slot 14: pad vertices at Y 500, normal Y -4096, ship Y 200.
 
-So the descent is a **rendering sequence layered over a ship that is already in its
-final position**, not a simulated drop. Whatever animates it moves the *craft* model
-and presumably draws the ship attached to it until release. That path is still
-unlocated: `maybe_AnimateRescueCraftGlow` (`0x80048d08`) is the only reader of the
-craft's object pointer and it only rewrites primitive colours.
+So the descent **is** simulated. The ship starts hovering 300 up with no velocity,
+and gravity lowers it onto the pad while the countdown runs. The maintenance craft
+is animated to match that fall, which is why it reads as the droid carrying the ship
+down and releasing it. The port already reproduces the ship's half of this, because
+it uses the same placement formula and runs the same physics; what is missing is only
+the craft model and its path.
 
-Correction to an earlier note in this file's discussion: a `spawn contact
-distance=300.0` line in the port's startup log was read as evidence the ship spawns
-300 units high. It is not -- that value comes from
-`physics.SampleShipTrackContact`, a diagnostic probe, and `sectionY` is the section
-centre rather than the road surface, so it is not comparable to the ship's Y. There
-is no unexplained spawn elevation.
+That path remains unlocated. `maybe_AnimateRescueCraftGlow` (`0x80048d08`) is the
+only reader of the craft's object pointer and it only rewrites primitive colours.
+Whatever positions it should be recoverable by looking for writes to its node, and
+its vertical track ought to match the ship's fall from +300 to 0 over the countdown.
+
+## Correction
+
+An earlier version of this section claimed the ship "is placed on its pad from the
+start", with "a few units of clearance, not a hover", and that there was "no
+unexplained spawn elevation". The first two are wrong: the offset is 300 units, a
+real hover. The startup log line `spawn contact distance=300.0` was reporting that
+clearance, and dismissing it as a mere probe artefact was a mistake -- the number
+was meaningful and matched the placement offset exactly.
