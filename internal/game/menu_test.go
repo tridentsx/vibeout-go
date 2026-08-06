@@ -176,6 +176,17 @@ func TestTeamSelectionAndClassModels(t *testing.T) {
 	if ClassModels[SpeedClassPhantom].Object != "phant" {
 		t.Errorf("Phantom model is %q, want phant", ClassModels[SpeedClassPhantom].Object)
 	}
+	// The high-detail set is the one to draw; JULIE names Venom differently from the
+	// other two files, which is easy to get wrong.
+	for i, m := range ClassModels {
+		if m.File != "JULIE.PRM" {
+			t.Errorf("class %d uses %s, want the high-detail JULIE.PRM", i, m.File)
+		}
+	}
+	if ClassModels[SpeedClassVenom].Object != "venom" {
+		t.Errorf("Venom model is %q; JULIE.PRM calls it venom, not ven",
+			ClassModels[SpeedClassVenom].Object)
+	}
 }
 
 // Every circuit must have a preview object, and the set must be exactly JUNE.PRM's
@@ -223,6 +234,11 @@ func TestRaceTypeModels(t *testing.T) {
 			t.Errorf("object %q is used twice", m.Object)
 		}
 		seen[m.Object] = true
+	}
+	// ARCADE LINK and ONE ON ONE were initially swapped.
+	if RaceTypeModels[2].Object != "arcade2" || RaceTypeModels[3].Object != "3d2pllink" {
+		t.Errorf("link icons are %q/%q, want arcade2 then 3d2pllink",
+			RaceTypeModels[2].Object, RaceTypeModels[3].Object)
 	}
 	// The challenge entry is the hidden one, illustrated by a question mark.
 	if RaceTypeModels[4].Object != "question" {

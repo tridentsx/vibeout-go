@@ -292,6 +292,12 @@ type TeamEntry struct {
 
 // TeamEntries is the standard five teams, ordered as the objects appear in
 // TERRY.PRM.
+//
+// TERRY.PRM is the only source of these: a scan of every PRM in COMMON finds team
+// craft nowhere else, at 71 to 113 polygons each (quirex1 113, auricom2 89, ag1 84,
+// piranha2 77, fiesar1 71). Unlike the class models there is no higher-detail
+// variant to prefer. The `pirhana` objects in HARRY.PRM, JULIE.PRM and PICHL.PRM at
+// 225-231 polygons are the challenge-mode Piranha, not the team craft.
 var TeamEntries = []TeamEntry{
 	{Name: "QIREX", Object: "quirex1"},
 	{Name: "FEISAR", Object: "fiesar1"},
@@ -328,29 +334,36 @@ func (c *GameContext) Teams() []TeamEntry {
 // it stands for the challenge entry, which is hidden until the medal thresholds open
 // it, so only four icons are normally selectable.
 //
-// `3d2pllink` names itself -- a 3D two-player link -- so it is the link mode.
-// `arcade2` for ONE ON ONE is inference from it being a second arcade variant rather
-// than anything stated.
+// The two link entries were initially assigned the other way round, on the reasoning
+// that `3d2pllink` naming itself a two-player link made it the ARCADE LINK entry.
+// Checked against the retail screens, it is the reverse: `arcade2` illustrates ARCADE
+// LINK and `3d2pllink` ONE ON ONE.
 var RaceTypeModels = [5]struct{ File, Object string }{
 	{"HARRY.PRM", "arcade"},     // ARCADE
 	{"HARRY.PRM", "timetrial1"}, // TIME TRIAL
-	{"HARRY.PRM", "3d2pllink"},  // ARCADE LINK
-	{"HARRY.PRM", "arcade2"},    // ONE ON ONE
+	{"HARRY.PRM", "arcade2"},    // ARCADE LINK
+	{"HARRY.PRM", "3d2pllink"},  // ONE ON ONE
 	{"HARRY.PRM", "question"},   // CHALLENGE, hidden until unlocked
 }
 
-// ClassModels names the PRM whose single object is each class's menu model, indexed
-// by SpeedClass.
+// ClassModels names each class's menu model, indexed by SpeedClass.
 //
-// Note that HARRY.PRM and JULIE.PRM also carry objects called vect, ven/venom, rap
-// and phant at different polygon counts -- JULIE's are the most detailed (rap is 496
-// polygons against 209 here). Which set the retail menu actually draws has not been
-// determined, so these single-object files are used for now.
+// Three variants of these objects exist at different detail levels. JULIE.PRM carries
+// the most detailed and is used here, since these are drawn large and close:
+//
+//	object   VECTO/VENOM/RAPIE/PHANT.PRM   HARRY.PRM   JULIE.PRM
+//	vect                             160          81         291
+//	ven/venom                        137         104         393
+//	rap                              209         133         496
+//	phant                            176         118         514
+//
+// The single-object files are presumably the in-race or low-detail versions. Note
+// JULIE names the second one `venom` where the others use `ven`.
 var ClassModels = [4]struct{ File, Object string }{
-	{"VECTO.PRM", "vect"},
-	{"VENOM.PRM", "ven"},
-	{"RAPIE.PRM", "rap"},
-	{"PHANT.PRM", "phant"},
+	{"JULIE.PRM", "vect"},
+	{"JULIE.PRM", "venom"},
+	{"JULIE.PRM", "rap"},
+	{"JULIE.PRM", "phant"},
 }
 
 // TrackPreviewObjects names the object inside COMMON/JUNE.PRM that previews each

@@ -245,7 +245,7 @@ func main() {
 	// name; see bn-psx/docs/wipeout2097_menu_system.md for what lives where.
 	menuModels := map[string]*assets.Model{}
 	for _, file := range []string{"VECTO.PRM", "VENOM.PRM", "RAPIE.PRM", "PHANT.PRM",
-		"TERRY.PRM", "WIERD.PRM", "JUNE.PRM", "HARRY.PRM"} {
+		"TERRY.PRM", "WIERD.PRM", "JUNE.PRM", "HARRY.PRM", "JULIE.PRM"} {
 		model, modelErr := loader.LoadModel("COMMON", file)
 		if modelErr != nil {
 			log.Printf("menu model %s unavailable: %v", file, modelErr)
@@ -520,6 +520,15 @@ const (
 	menuHeadingY    = 52
 	menuModelY      = 104
 	menuNameY       = 148
+	// Model fill sizes are the port's own: DrawMenuModel derives its scale from each
+	// object's extent to fill this many pixels, since retail's own per-screen camera
+	// distance has not been reversed. Craft read smaller than the track shapes and
+	// race type icons at the same extent, because their bulk is concentrated along one
+	// axis, so they get a 15% larger target.
+	menuColumnFill      = 66
+	menuColumnFillCraft = 76
+	menuSubFill         = 120
+	menuSubFillCraft    = 138
 	menuStartY      = 164
 	menuFooterY     = 182
 )
@@ -569,7 +578,12 @@ func drawMainScreen(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuC
 	// Models first, then the text band so labels sit in front.
 	for i := range columns {
 		file, object := mainColumnModel(ctx, i)
-		drawNamedModel(ui, frame, models, textures, file, object, columnCentre(i), menuModelY, 66, spin)
+		fill := float32(menuColumnFill)
+		if i == 1 {
+			// The team column shows a craft.
+			fill = menuColumnFillCraft
+		}
+		drawNamedModel(ui, frame, models, textures, file, object, columnCentre(i), menuModelY, fill, spin)
 	}
 	ui.BeginTextBand()
 
@@ -662,7 +676,12 @@ func drawMenu(ui *gameRender.UI, frame *gameRender.Frame, menu *game.MenuCursor,
 	// Sub-screens: one model for the highlighted row, with the rows listed down the
 	// left.
 	file, object := subScreenModel(menu, ctx)
-	drawNamedModel(ui, frame, models, textures, file, object, 210, 118, 120, spin)
+	subFill := float32(menuSubFill)
+	switch screen {
+	case game.ScreenTeam, game.ScreenClass:
+		subFill = menuSubFillCraft
+	}
+	drawNamedModel(ui, frame, models, textures, file, object, 210, 118, subFill, spin)
 	ui.BeginTextBand()
 
 	const (
