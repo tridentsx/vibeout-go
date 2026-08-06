@@ -488,3 +488,47 @@ mid-race rescue are one scheme.
 The lesson is narrow and worth keeping: a wrong name defeated a correct search. The
 function was in the result set of exactly the right query and I filtered it out by
 reading its label instead of its body.
+
+## The stationary bob, measured
+
+Confirmed by simulating a spawn with no input and logging height. The craft drops from
+Y 200, overshoots to 312, and settles at 275 -- but takes **275 ticks, eleven seconds**,
+with swings decaying 62.6, 38.6, 22.2, 13.4, 7.8, 4.6, 2.7, 1.6, 0.9. That is a ratio of
+about 0.6 per swing, needing nine swings. Retail settles in around two.
+
+The mechanism is in `integrateAirborneShipPhysics`:
+
+```go
+redirectTarget = |velocity| * Forward
+accel.Y = (redirectTarget.Y - Velocity.Y)/springDenom + (thrust.Y + gravityBiasY)/InertiaFactor
+springDenom = 4*brakeSum + 20
+```
+
+With speed, `redirectTarget` is large and aligned with `Forward`, whose Y component is
+near zero on level track, so vertical velocity is pulled hard toward zero and the bob
+stops. Stationary, `|velocity|` is near zero so there is no redirect at all, leaving only
+the `1/20` term -- a retention of 0.95 per tick. That is exactly the observed behaviour:
+a sine wave while standing still, settling as soon as the craft moves.
+
+So the weak damping is not a missing line; it falls out of the redirect being
+proportional to speed. Two possibilities, and they need distinguishing before anything is
+changed:
+
+1. Retail has a separate damping term in its **track contact** response that the port
+   never took across, independent of the airborne redirect. `trackSurfaceMinimumDistance`
+   (75) and `trackSurfaceZeroNormalForceDistance` (256) came from
+   `IntegrateShipPhysicsAndTrackContact` around 0x80030e70, but whatever multiplies the
+   resulting normal force was not examined for a velocity term.
+2. The port's surface spring is too strong, so it injects more energy per bounce than
+   retail and the same damping cannot absorb it.
+
+The way to tell them apart is to read the normal-force computation in
+`IntegrateShipPhysicsAndTrackContact` and check whether it subtracts anything
+proportional to the ship's velocity along the surface normal. A spring with no such term
+is undamped by construction, and the 1/20 redirect is then the only thing removing
+energy -- which matches the measured 0.6 ratio.
+
+Also reported and not yet investigated: the craft **starts moving on its own after a
+couple of seconds** with no input. Nothing in the measured run shows lateral drift, so
+this may be a separate defect in the horizontal axes rather than a consequence of the
+vertical oscillation.
