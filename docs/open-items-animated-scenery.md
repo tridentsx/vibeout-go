@@ -358,3 +358,34 @@ ported.
 
 This is worth fixing before the maintenance craft: a visibly oscillating ship will
 make any craft animation impossible to judge.
+
+
+## The rescue craft's lights are fully recovered
+
+Verified against play: the craft's rear lights are red and blink on and off as it
+departs. `maybe_AnimateRescueCraftGlow` (`0x80048d08`) produces exactly that.
+
+One accumulating phase drives three sine samples:
+
+```c
+phase += 0x8c                                       // per tick
+s1 = clamp((GetSin(phase)        >> 5) + 0x80, 0xff)
+s0 = clamp((GetSin(phase + 75)   >> 5) + 0x80, 0xff)   // 75/4096 out of step
+t2 = clamp((GetSin(phase/2 + 32) >> 5) + 0x80, 0xff)   // half rate
+```
+
+and the eleven primitives split into three groups, written R, G, B:
+
+| primitives | colour | effect |
+|---|---|---|
+| 0–1 | `(0x28, s0, 0x28)` | green, pulsing |
+| 2–5 | `(t2>>1, t2>>1, t2)` | blue, pulsing at half rate |
+| 6–10 | `(s1, 0x28, 0x28)` | **red, pulsing** |
+
+`(sin >> 5) + 0x80` sweeps the full 0 to 0xff, so these blink rather than glow. The
+last group being red is the agreement that makes the grouping verified rather than
+inferred: the code says the final five primitives pulse red, and the screen shows red
+blinking rear lights.
+
+This is enough to render the craft correctly once it can be positioned. The motion
+remains the only missing piece, and the eliminated candidates are listed above.
