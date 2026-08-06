@@ -22,6 +22,7 @@ const (
 	// executable's draw calls use these coordinates directly.
 	RetailWidth  = 320
 	RetailHeight = 240
+
 )
 
 // UI draws screen-space quads in retail coordinates. It owns the font texture and
@@ -90,8 +91,15 @@ func (u *UI) quad(f *Frame, tex *sdl.GPUTexture, dstX, dstY, dstW, dstH float32,
 	x0, y0 := u.ndc(dstX, dstY)
 	x1, y1 := u.ndc(dstX+dstW, dstY+dstH)
 
-	// Depth 0 puts the UI in front of everything the 3D pass draws.
-	const z = 0
+	// The vertex shader takes inPosition.z as *camera-space Z*, not a depth value,
+	// and emits vec4(x*z, y*z, depth*z, z) so the GPU's perspective divide recovers
+	// the screen position. Passing 0 makes that vec4(0,0,0,0) and nothing renders at
+	// all -- which is exactly what happened first: a black screen.
+	//
+	// Sitting exactly on the near plane gives depth = (z-near)/(far-near) = 0, the
+	// nearest value, so the UI passes the LESS test against the 1.0 depth clear and
+	// draws over everything the 3D pass emitted.
+	const z = depthNear
 	tl := Vertex{X: x0, Y: y0, Z: z, U: u0, V: v0, R: col.R, G: col.G, B: col.B, A: col.A}
 	tr := Vertex{X: x1, Y: y0, Z: z, U: u1, V: v0, R: col.R, G: col.G, B: col.B, A: col.A}
 	bl := Vertex{X: x0, Y: y1, Z: z, U: u0, V: v1, R: col.R, G: col.G, B: col.B, A: col.A}
